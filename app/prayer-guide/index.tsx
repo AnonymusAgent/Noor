@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, Spacing, Radius } from '../../constants/theme';
+import { Spacing, Radius, ThemeColors } from '../../constants/theme';
+import { useApp } from '../../contexts/AppContext';
 
 const PRAYER_GUIDE_SECTIONS = [
   {
@@ -13,7 +14,7 @@ const PRAYER_GUIDE_SECTIONS = [
     title: 'Five Daily Prayers',
     arabic: 'الصلوات الخمس',
     icon: '🕌',
-    color: Colors.primary,
+    color: '#1B5E4A',
     content: [
       {
         prayer: 'Fajr',
@@ -182,12 +183,14 @@ export default function PrayerGuideScreen() {
   const [expandedPrayer, setExpandedPrayer] = useState<string | null>(null);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'guide' | 'faq'>('guide');
+  const { colors: C } = useApp();
+  const styles = useMemo(() => createStyles(C), [C]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={24} color={Colors.textPrimary} />
+          <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View>
           <Text style={styles.headerTitle}>Prayer Guide</Text>
@@ -226,7 +229,7 @@ export default function PrayerGuideScreen() {
                   <MaterialIcons
                     name={expandedSection === section.id ? 'expand-less' : 'expand-more'}
                     size={22}
-                    color={Colors.textMuted}
+                    color={C.textMuted}
                   />
                 </Pressable>
 
@@ -257,7 +260,7 @@ export default function PrayerGuideScreen() {
                           <MaterialIcons
                             name={expandedPrayer === prayer.prayer ? 'expand-less' : 'expand-more'}
                             size={20}
-                            color={Colors.textMuted}
+                            color={C.textMuted}
                           />
                         </Pressable>
 
@@ -273,7 +276,7 @@ export default function PrayerGuideScreen() {
                               </View>
                             ))}
                             <View style={styles.refBox}>
-                              <MaterialIcons name="verified" size={12} color={Colors.success} />
+                              <MaterialIcons name="verified" size={12} color={C.success} />
                               <Text style={styles.refText}>{prayer.reference}</Text>
                             </View>
                           </View>
@@ -297,12 +300,12 @@ export default function PrayerGuideScreen() {
                 onPress={() => setExpandedFaq(expandedFaq === i ? null : i)}
               >
                 <View style={styles.faqQuestion}>
-                  <MaterialIcons name="help-outline" size={18} color={Colors.gold} />
+                  <MaterialIcons name="help-outline" size={18} color={C.gold} />
                   <Text style={styles.faqQ}>{faq.q}</Text>
                   <MaterialIcons
                     name={expandedFaq === i ? 'expand-less' : 'expand-more'}
                     size={18}
-                    color={Colors.textMuted}
+                    color={C.textMuted}
                   />
                 </View>
                 {expandedFaq === i && (
@@ -318,7 +321,7 @@ export default function PrayerGuideScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row',

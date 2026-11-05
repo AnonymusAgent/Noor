@@ -3,26 +3,20 @@
  * copy, share, bookmark, and font size controls.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Share, Clipboard, Alert, ScrollView, Modal,
+  ActivityIndicator, Share, Alert, Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Spacing, Radius } from '../../constants/theme';
 import { useApp } from '../../contexts/AppContext';
 import { SURAH_LIST } from '../../constants/quranData';
 import { fetchSurah } from '../../services/quranService';
-import {
-  getTafsirFromCache,
-  saveTafsirToCache,
-  isTafsirCached,
-  TOP_SURAHS_FOR_TAFSIR,
-} from '../../services/tafsirCacheService';
+import { getTafsirFromCache, saveTafsirToCache } from '../../services/tafsirCacheService';
 
 const TAFSIR_EDITIONS = [
   { id: 'en.ibn-katheer', name: 'Ibn Kathir (English)', lang: 'English', scholar: 'Ibn Kathir' },
@@ -42,22 +36,6 @@ interface LoadState {
   data: TafsirAyah[];
 }
 
-const CACHE_PREFIX = 'tafsir_cache_';
-
-async function loadCached(key: string): Promise<TafsirAyah[] | null> {
-  try {
-    const raw = await AsyncStorage.getItem(CACHE_PREFIX + key);
-    if (raw) return JSON.parse(raw);
-  } catch { /* silent */ }
-  return null;
-}
-
-async function saveCache(key: string, data: TafsirAyah[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(CACHE_PREFIX + key, JSON.stringify(data));
-  } catch { /* silent */ }
-}
-
 export default function TafsirScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -74,27 +52,13 @@ export default function TafsirScreen() {
   const [showEditionPicker, setShowEditionPicker] = useState(false);
   const [offlineBadge, setOfflineBadge] = useState(false);
 
-  const cacheKey = `${surahNum}_${selectedEdition}`;
-
-  useEffect(() => {
-    loadTafsir();
-  }, [surahNum, selectedEdition]);
-
-  const loadTafsir = async () => {
+  const loadTafsir = useCallback(async () => {
     setState({ loading: true, error: null, data: [] });
 
     // 1. Try tafsirCacheService (pre-cached top surahs)
     const serviceCache = await getTafsirFromCache(surahNum, selectedEdition);
     if (serviceCache && serviceCache.length > 0) {
       setState({ loading: false, error: null, data: serviceCache });
-      setOfflineBadge(true);
-      return;
-    }
-
-    // 2. Try legacy AsyncStorage cache
-    const legacyCached = await loadCached(cacheKey);
-    if (legacyCached) {
-      setState({ loading: false, error: null, data: legacyCached });
       setOfflineBadge(true);
       return;
     }
@@ -111,15 +75,18 @@ export default function TafsirScreen() {
         tafsirText: tafsirData.ayahs[i]?.text || '',
       }));
 
-      // Save to both cache systems
+      // Cache so the surah opens offline next time.
       await saveTafsirToCache(surahNum, selectedEdition, merged);
-      await saveCache(cacheKey, merged);
       setState({ loading: false, error: null, data: merged });
       setOfflineBadge(false);
     } catch {
       setState({ loading: false, error: 'Failed to load Tafsir. Check your connection and try again.', data: [] });
     }
-  };
+  }, [surahNum, selectedEdition]);
+
+  useEffect(() => {
+    loadTafsir();
+  }, [loadTafsir]);
 
   const toggleExpand = useCallback((num: number) => {
     setExpanded(prev => {
@@ -130,19 +97,24 @@ export default function TafsirScreen() {
     });
   }, []);
 
-  const shareAyah = async (ayah: TafsirAyah) => {
+  const shareAyah = useCallback(async (ayah: TafsirAyah) => {
     const editionName = TAFSIR_EDITIONS.find(e => e.id === selectedEdition)?.name || 'Tafsir';
     const text = `${ayah.arabicText}\n\nTafsir (${editionName}):\n${ayah.tafsirText.slice(0, 600)}${ayah.tafsirText.length > 600 ? '...' : ''}\n\n— Quran ${surahNum}:${ayah.numberInSurah}`;
     await Share.share({ message: text });
-  };
+  }, [selectedEdition, surahNum]);
 
-  const copyAyah = (ayah: TafsirAyah) => {
+  const copyAyah = useCallback(async (ayah: TafsirAyah) => {
     const text = `${ayah.arabicText}\n\n${ayah.tafsirText}`;
-    Clipboard.setString(text);
-    Alert.alert('Copied', 'Tafsir copied to clipboard.');
-  };
+    try {
+      // `Clipboard` was removed from react-native core; Share is the portable
+      // way to hand the text to the OS clipboard/notes without a new dependency.
+      await Share.share({ message: text });
+    } catch {
+      Alert.alert('Unable to copy', 'Please try again.');
+    }
+  }, []);
 
-  const bookmarkAyah = (ayah: TafsirAyah) => {
+  const bookmarkAyah = useCallback((ayah: TafsirAyah) => {
     const ref = `tafsir_${surahNum}_${ayah.numberInSurah}`;
     if (isBookmarked(ref)) {
       removeBookmark(ref);
@@ -155,7 +127,7 @@ export default function TafsirScreen() {
         arabic: ayah.arabicText,
       });
     }
-  };
+  }, [addBookmark, isBookmarked, removeBookmark, surahMeta?.transliteration, surahNum]);
 
   const expandAll = () => {
     setExpanded(new Set(state.data.map(a => a.numberInSurah)));
@@ -233,7 +205,18 @@ export default function TafsirScreen() {
         )}
       </View>
     );
-  }, [expanded, C, tafsirFontSize, selectedEdition]);
+  }, [
+    C,
+    bookmarkAyah,
+    copyAyah,
+    expanded,
+    isBookmarked,
+    selectedEdition,
+    shareAyah,
+    surahNum,
+    tafsirFontSize,
+    toggleExpand,
+  ]);
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>

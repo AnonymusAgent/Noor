@@ -5,8 +5,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, Pressable, ScrollView, FlatList,
-  ActivityIndicator, Modal, TextInput, Alert, Platform,
+  View, Text, StyleSheet, Pressable, ScrollView,
+  ActivityIndicator, Modal, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,8 +16,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
-import { SURAH_LIST, RECITERS } from '../constants/quranData';
+import { SURAH_LIST } from '../constants/quranData';
 import { fetchSurah, getAyahAudioUrl } from '../services/quranService';
+import { toDateKey } from '../lib/date';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ interface SurahHifzProgress {
   surahNum: number;
   memorizedAyahs: number[];  // ayah numbers memorized
   weakAyahs: number[];       // ayah numbers flagged as weak
+  memorizedAt?: Record<number, number>; // ayah number -> timestamp memorized
   lastRevised?: number;      // timestamp
   startedAt?: number;
   completedAt?: number;
@@ -135,11 +137,16 @@ export default function HifzScreen() {
       : [...current.memorizedAyahs, ayahNum];
 
     const total = SURAH_LIST[surahNum - 1]?.versesCount || 1;
+    const memorizedAt = { ...(current.memorizedAt || {}) };
+    if (mem.includes(ayahNum)) memorizedAt[ayahNum] = Date.now();
+    else delete memorizedAt[ayahNum];
+
     const updated = {
       ...progress,
       [surahNum]: {
         ...current,
         memorizedAyahs: mem,
+        memorizedAt,
         lastRevised: Date.now(),
         completedAt: mem.length === total ? Date.now() : undefined,
       },
@@ -161,44 +168,111 @@ export default function HifzScreen() {
     await saveProgress({ ...progress, [surahNum]: { ...current, lastRevised: Date.now() } });
   }, [progress]);
 
+  // Verses memorised per local calendar day (for today's goal + streaks).
+  const dailyMemorized = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of Object.values(progress)) {
+      for (const ts of Object.values(p.memorizedAt || {})) {
+        if (!ts) continue;
+        const key = toDateKey(new Date(ts));
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [progress]);
+
   // Stats
   const stats: HifzStats = React.useMemo(() => {
     const totalMem = Object.values(progress).reduce((s, p) => s + p.memorizedAyahs.length, 0);
     const totalSurahs = Object.values(progress).filter(
       p => p.memorizedAyahs.length === (SURAH_LIST[p.surahNum - 1]?.versesCount || 0)
     ).length;
+
+    const keyFor = (offset: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - offset);
+      return toDateKey(d);
+    };
+
+    let longestStreak = 0;
+    const sortedKeys = Object.keys(dailyMemorized).sort();
+    let run = 0;
+    let prev: Date | null = null;
+    for (const key of sortedKeys) {
+      const [y, m, day] = key.split('-').map(Number);
+      const current = new Date(y, m - 1, day);
+      if (prev && (current.getTime() - prev.getTime()) / 86_400_000 === 1) run += 1;
+      else run = 1;
+      longestStreak = Math.max(longestStreak, run);
+      prev = current;
+    }
+
+    // Today may not be logged yet, so don't reset the streak on it.
+    let start = dailyMemorized[keyFor(0)] ? 0 : 1;
+    let currentStreak = 0;
+    for (let i = start; i < 400; i++) {
+      if (dailyMemorized[keyFor(i)]) currentStreak++;
+      else break;
+    }
+
+    const weeklyProgress = Array.from({ length: 7 }, (_, i) =>
+      dailyMemorized[keyFor(6 - i)] || 0
+    );
+
     return {
       totalMemorized: totalMem,
       totalSurahs,
-      currentStreak: 0, // simplified
-      longestStreak: 0,
-      weeklyProgress: [0, 0, 0, 0, 0, 0, 0],
+      currentStreak,
+      longestStreak,
+      weeklyProgress,
     };
-  }, [progress]);
+  }, [progress, dailyMemorized]);
 
-  // Listen mode — play individual ayah
-  const playAyah = async (surahNum: number, ayahNum: number) => {
+  const memorizedToday = dailyMemorized[toDateKey()] || 0;
+
+  // Listen mode — play (or stop) an individual ayah.
+  const stopAyah = useCallback(async () => {
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
-      const reciter = RECITERS.find(r => r.id === hifzSettings.activeReciter) || RECITERS[0];
-      const url = getAyahAudioUrl(surahNum, ayahNum, hifzSettings.activeReciter);
+      await soundRef.current?.stopAsync();
+      await soundRef.current?.unloadAsync();
+    } catch { /* already unloaded */ }
+    soundRef.current = null;
+    setIsPlaying(false);
+  }, []);
+
+  const playAyah = async (surahNum: number, ayahNum: number) => {
+    // Tapping while a playback is active stops it (the button shows "stop").
+    if (soundRef.current) {
+      await stopAyah();
+      return;
+    }
+    try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
         shouldDuckAndroid: true,
       });
+      const url = getAyahAudioUrl(surahNum, ayahNum, hifzSettings.activeReciter);
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
         { shouldPlay: true },
-        status => { if (status.isLoaded && status.didJustFinish) setIsPlaying(false); }
+        status => {
+          // Release the sound once it ends, otherwise the next tap only stops.
+          if (status.isLoaded && status.didJustFinish) {
+            sound.unloadAsync().catch(() => {});
+            if (soundRef.current === sound) soundRef.current = null;
+            setIsPlaying(false);
+          }
+        }
       );
       soundRef.current = sound;
       setIsPlaying(true);
-    } catch { setIsPlaying(false); }
+    } catch {
+      soundRef.current = null;
+      setIsPlaying(false);
+      Alert.alert('Playback failed', 'This ayah audio could not be loaded. Check your connection.');
+    }
   };
 
   // Load test mode for a surah
@@ -323,9 +397,13 @@ export default function HifzScreen() {
                     Memorize {hifzSettings.dailyTarget} verses
                   </Text>
                 </View>
-                <View style={[styles.targetBadge, { backgroundColor: `${C.success}15` }]}>
-                  <Text style={[styles.targetBadgeText, { color: C.success }]}>
-                    0/{hifzSettings.dailyTarget}
+                <View style={[styles.targetBadge, {
+                  backgroundColor: memorizedToday >= hifzSettings.dailyTarget ? `${C.success}20` : `${C.gold}15`,
+                }]}>
+                  <Text style={[styles.targetBadgeText, {
+                    color: memorizedToday >= hifzSettings.dailyTarget ? C.success : C.gold,
+                  }]}>
+                    {memorizedToday}/{hifzSettings.dailyTarget}
                   </Text>
                 </View>
               </View>

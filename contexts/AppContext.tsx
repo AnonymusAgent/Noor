@@ -1,7 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, {
+  createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Appearance, ColorSchemeName } from 'react-native';
-import { getColors, ThemeColors } from '../constants/theme';
+import { getColors, getHighContrastColors, ThemeColors } from '../constants/theme';
+import { isWithinDarkWindow, toDateKey } from '../lib/date';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,13 +27,16 @@ export interface Note {
   tags?: string[];
   surahNumber?: number;
   ayahNumber?: number;
+  color?: HighlightColor;
 }
+
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red';
 
 export interface Highlight {
   id: string;
   surahNumber: number;
   ayahNumber: number;
-  color: 'yellow' | 'green' | 'blue' | 'red';
+  color: HighlightColor;
   verseText?: string;
   timestamp: number;
 }
@@ -254,13 +260,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [salahRecords, setSalahRecords] = useState<SalahRecord[]>([]);
   const [systemColorScheme, setSystemColorScheme] = useState<ColorSchemeName>(Appearance.getColorScheme());
+  const [now, setNow] = useState(() => new Date());
 
-  // Resolve effective theme
-  const effectiveTheme = settings.theme === 'system'
-    ? (systemColorScheme === 'light' ? 'light' : 'dark')
-    : settings.theme;
+  // Resolve effective theme. A manual theme choice still loses to the
+  // auto dark-mode schedule while its window is active.
+  const scheduleActive = isWithinDarkWindow(settings.darkModeSchedule, now);
+  const effectiveTheme: 'dark' | 'light' = scheduleActive
+    ? 'dark'
+    : settings.theme === 'system'
+      ? (systemColorScheme === 'light' ? 'light' : 'dark')
+      : settings.theme;
 
-  const colors = getColors(effectiveTheme as 'dark' | 'light');
+  const baseColors = getColors(effectiveTheme);
+  const colors = settings.highContrastMode ? getHighContrastColors(effectiveTheme) : baseColors;
 
   // Listen to system theme changes
   useEffect(() => {
@@ -269,6 +281,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     return () => sub.remove();
   }, []);
+
+  // Re-evaluate the dark-mode schedule every minute so the app flips theme
+  // without needing a restart.
+  useEffect(() => {
+    if (!settings.darkModeSchedule.enabled) return;
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, [settings.darkModeSchedule.enabled]);
 
   // Load all persisted data on mount
   useEffect(() => {
@@ -292,7 +312,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (map['bookmarks']) setBookmarks(JSON.parse(map['bookmarks']));
       if (map['notes']) setNotes(JSON.parse(map['notes']));
       if (map['last_read']) setLastReadState(JSON.parse(map['last_read']));
-      if (map['tasbeeh_history']) setDailyTasbeehHistory(JSON.parse(map['tasbeeh_history']));
+      if (map['tasbeeh_history']) {
+        const history: { date: string; count: number }[] = JSON.parse(map['tasbeeh_history']);
+        setDailyTasbeehHistory(history);
+        // History is per-day, so restore today's tally for the tasbeeh screen.
+        setTasbeehCountState(history.find(h => h.date === toDateKey())?.count ?? 0);
+      }
       if (map['favorite_duas']) setFavoritedDuas(JSON.parse(map['favorite_duas']));
       if (map['ai_messages']) setAIMessages(JSON.parse(map['ai_messages']));
       if (map['ai_conversations']) {
@@ -308,11 +333,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch { /* use defaults */ }
   };
 
+  // Settings are read through a ref so `updateSettings` keeps a stable identity
+  // and, more importantly, so two updates dispatched in the same tick merge
+  // instead of the second one clobbering the first with stale state.
+  const settingsRef = useRef<AppSettings>(defaultSettings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
   const updateSettings = useCallback(async (updates: Partial<AppSettings>) => {
-    const newSettings = { ...settings, ...updates };
+    const newSettings = { ...settingsRef.current, ...updates };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
     await AsyncStorage.setItem('app_settings_v2', JSON.stringify(newSettings));
-  }, [settings]);
+  }, []);
 
   // ── Bookmarks ────────────────────────────────────────────────────────────────
 
@@ -364,15 +396,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setTasbeehCount = useCallback(async (count: number) => {
     setTasbeehCountState(count);
-    const today = new Date().toISOString().split('T')[0];
-    const updated = [...dailyTasbeehHistory];
-    const idx = updated.findIndex(h => h.date === today);
-    if (idx >= 0) updated[idx] = { date: today, count };
-    else updated.unshift({ date: today, count });
-    const trimmed = updated.slice(0, 60);
-    setDailyTasbeehHistory(trimmed);
-    await AsyncStorage.setItem('tasbeeh_history', JSON.stringify(trimmed));
-  }, [dailyTasbeehHistory]);
+    const today = toDateKey();
+    // Functional update: several taps can land before the next render, and a
+    // captured `dailyTasbeehHistory` would drop all but the last one.
+    let toPersist: { date: string; count: number }[] = [];
+    setDailyTasbeehHistory(prev => {
+      const updated = [...prev];
+      const idx = updated.findIndex(h => h.date === today);
+      if (idx >= 0) updated[idx] = { date: today, count };
+      else updated.unshift({ date: today, count });
+      toPersist = updated.slice(0, 60);
+      return toPersist;
+    });
+    if (toPersist.length > 0) {
+      await AsyncStorage.setItem('tasbeeh_history', JSON.stringify(toPersist));
+    }
+  }, []);
 
   // ── Duas ─────────────────────────────────────────────────────────────────────
 
@@ -391,12 +430,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const updated = [...aiMessages, newMsg].slice(-200);
     setAIMessages(updated);
     await AsyncStorage.setItem('ai_messages', JSON.stringify(updated));
-  }, [aiMessages]);
+
+    // Mirror the message into its conversation so switching chats (or
+    // reloading the app) does not show an empty history.
+    if (activeConversationId) {
+      const convs = aiConversations.map(c =>
+        c.id === activeConversationId
+          ? { ...c, messages: [...c.messages, newMsg].slice(-200), updatedAt: newMsg.timestamp }
+          : c
+      );
+      setAIConversations(convs);
+      await AsyncStorage.setItem('ai_conversations', JSON.stringify(convs));
+    }
+  }, [aiMessages, activeConversationId, aiConversations]);
 
   const clearAIChat = useCallback(async () => {
     setAIMessages([]);
     await AsyncStorage.removeItem('ai_messages');
-  }, []);
+    if (activeConversationId) {
+      const convs = aiConversations.map(c =>
+        c.id === activeConversationId ? { ...c, messages: [], updatedAt: Date.now() } : c
+      );
+      setAIConversations(convs);
+      await AsyncStorage.setItem('ai_conversations', JSON.stringify(convs));
+    }
+  }, [activeConversationId, aiConversations]);
 
   const createConversation = useCallback((title?: string): string => {
     const id = `conv_${Date.now()}`;

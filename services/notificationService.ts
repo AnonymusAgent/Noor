@@ -45,6 +45,8 @@ async function scheduleDaily(
   minute: number
 ): Promise<void> {
   try {
+    // Re-using an identifier silently replaces the trigger on Android but not
+    // on iOS, so cancel the previous instance first.
     await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
     await Notifications.scheduleNotificationAsync({
       identifier,
@@ -92,7 +94,9 @@ function adjustForOffset(hour: number, minute: number, minsBefore: number): { ho
  */
 export async function schedulePrayerNotificationsWithGPS(
   notifSettings: NotificationSettings,
-  forceRefresh = false
+  forceRefresh = false,
+  calculationMethod = 3,
+  school = 0,
 ): Promise<{ success: boolean; source: 'gps' | 'fallback' }> {
   // Rate-limit GPS updates
   if (!forceRefresh) {
@@ -100,7 +104,10 @@ export async function schedulePrayerNotificationsWithGPS(
       const lastRaw = await AsyncStorage.getItem(GPS_UPDATE_KEY);
       if (lastRaw) {
         const last = JSON.parse(lastRaw);
-        if (Date.now() - last.timestamp < GPS_UPDATE_INTERVAL) {
+        const sameMethod = last.method === undefined
+          ? calculationMethod === 3
+          : last.method === calculationMethod && (last.school ?? 0) === school;
+        if (sameMethod && Date.now() - last.timestamp < GPS_UPDATE_INTERVAL) {
           // Already scheduled recently — apply settings with last known times
           if (last.timings) {
             await _applyPrayerSchedule(last.timings, notifSettings);
@@ -116,8 +123,10 @@ export async function schedulePrayerNotificationsWithGPS(
     const Location = await import('expo-location');
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      await applyAllNotificationSettings(notifSettings);
-      return { success: true, source: 'fallback' };
+      await _cancelPrayerNotificationsNotEnabled(notifSettings);
+      const cached = await _applyFallbackPrayerSchedule(notifSettings);
+      // Only report success when real (cached) prayer times were used.
+      return { success: cached === 'gps', source: 'fallback' };
     }
 
     const pos = await Location.getCurrentPositionAsync({
@@ -125,12 +134,19 @@ export async function schedulePrayerNotificationsWithGPS(
     });
     const { latitude, longitude } = pos.coords;
 
+    // Honour the user's calculation method / madhab instead of always using
+    // method 5 (Egyptian), which produced times that disagreed with the Prayer tab.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const res = await Promise.race([
       fetch(
-        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=${5}&school=0`
+        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}` +
+        `&method=${calculationMethod}&school=${school}`
       ),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+      new Promise<never>((_, rej) => {
+        timeoutId = setTimeout(() => rej(new Error('timeout')), 8000);
+      }),
     ]) as Response;
+    if (timeoutId) clearTimeout(timeoutId);
 
     const json = await res.json();
     const timings = json.data?.timings as Record<string, string> | undefined;
@@ -139,15 +155,19 @@ export async function schedulePrayerNotificationsWithGPS(
     // Cache for rate-limiting
     await AsyncStorage.setItem(
       GPS_UPDATE_KEY,
-      JSON.stringify({ timestamp: Date.now(), latitude, longitude, timings })
+      JSON.stringify({
+        timestamp: Date.now(), latitude, longitude, timings,
+        method: calculationMethod, school,
+      })
     );
 
     await _applyPrayerSchedule(timings, notifSettings);
     return { success: true, source: 'gps' };
   } catch {
-    // GPS/API failed — fall back to static defaults
-    await applyAllNotificationSettings(notifSettings);
-    return { success: false, source: 'fallback' };
+    // GPS/API failed — fall back to cached times, else static defaults.
+    await _cancelPrayerNotificationsNotEnabled(notifSettings);
+    const cached = await _applyFallbackPrayerSchedule(notifSettings);
+    return { success: cached === 'gps', source: 'fallback' };
   }
 }
 
@@ -155,13 +175,13 @@ async function _applyPrayerSchedule(
   timings: Record<string, string>,
   notifSettings: NotificationSettings
 ): Promise<void> {
-  const prayerMap: Array<{
+  const prayerMap: {
     alAdhanKey: string;
     settingKey: keyof NotificationSettings;
     emoji: string;
     label: string;
     body: string;
-  }> = [
+  }[] = [
     {
       alAdhanKey: 'Fajr', settingKey: 'fajrReminder', emoji: '🌙',
       label: 'Fajr Prayer',
@@ -312,9 +332,9 @@ export async function scheduleFastingReminder(enabled: boolean): Promise<void> {
 
 export async function applyAllNotificationSettings(
   notifSettings: NotificationSettings
-): Promise<void> {
+): Promise<{ prayerSource: 'gps' | 'fallback' }> {
   const hasPermission = await requestNotificationPermission();
-  if (!hasPermission) return;
+  if (!hasPermission) return { prayerSource: 'fallback' };
 
   await scheduleDailyAyah(notifSettings.dailyAyah);
   await scheduleDailyHadith(notifSettings.dailyHadith);
@@ -324,7 +344,36 @@ export async function applyAllNotificationSettings(
   await scheduleTahajjudReminder(notifSettings.tahajjudReminder);
   await scheduleFastingReminder(notifSettings.fastingReminder);
 
-  // Static fallback prayer times
+  // AlAdhan needs no permission — only the user's own coordinates do. Reuse the
+  // last known position (or fall back to the library's own times) so the
+  // reminders still land on real prayer times when GPS is unavailable.
+  // Never leave a stale reminder from a previous configuration behind, then
+  // (re)schedule the ones that are still enabled.
+  await _cancelPrayerNotificationsNotEnabled(notifSettings);
+  const prayerSource = await _applyFallbackPrayerSchedule(notifSettings);
+
+  return { prayerSource };
+}
+
+/** Applies prayer reminders from the cached GPS cache, else static defaults. */
+async function _applyFallbackPrayerSchedule(
+  notifSettings: NotificationSettings
+): Promise<'gps' | 'fallback'> {
+  let timings: Record<string, string> | null = null;
+  try {
+    const lastRaw = await AsyncStorage.getItem(GPS_UPDATE_KEY);
+    if (lastRaw) {
+      const last = JSON.parse(lastRaw);
+      if (last?.timings) timings = last.timings as Record<string, string>;
+    }
+  } catch { /* ignore */ }
+
+  if (timings) {
+    await _applyPrayerSchedule(timings, notifSettings);
+    return 'gps';
+  }
+
+  // Last resort: static defaults, clearly flagged to the caller.
   const fallbackTimes: Record<string, [number, number]> = {
     Fajr: [5, 0], Dhuhr: [12, 30], Asr: [15, 30], Maghrib: [18, 15], Isha: [20, 0],
   };
@@ -335,10 +384,25 @@ export async function applyAllNotificationSettings(
   for (const [prayer, key] of Object.entries(prayerSettingMap)) {
     if (notifSettings[key]) {
       const [h, m] = fallbackTimes[prayer];
-      await schedulePrayerNotification(prayer as any, h, m, notifSettings.reminderMinutesBefore);
-    } else {
-      await cancelNotification(`prayer_${prayer.toLowerCase()}`);
+      await schedulePrayerNotification(
+        prayer as 'Fajr' | 'Dhuhr' | 'Asr' | 'Maghrib' | 'Isha',
+        h, m, notifSettings.reminderMinutesBefore
+      );
     }
+  }
+  return 'fallback';
+}
+
+const PRAYER_SETTING_KEYS: Record<string, keyof NotificationSettings> = {
+  fajr: 'fajrReminder', dhuhr: 'dhuhrReminder', asr: 'asrReminder',
+  maghrib: 'maghribReminder', isha: 'ishaReminder',
+};
+
+async function _cancelPrayerNotificationsNotEnabled(
+  notifSettings: NotificationSettings
+): Promise<void> {
+  for (const [prayer, key] of Object.entries(PRAYER_SETTING_KEYS)) {
+    if (!notifSettings[key]) await cancelNotification(`prayer_${prayer}`);
   }
 }
 

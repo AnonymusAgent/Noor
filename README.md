@@ -21,12 +21,6 @@ corepack pnpm ios
 corepack pnpm web
 ```
 
-- Reset the project (clear cache, etc.):
-
-```bash
-corepack pnpm reset-project
-```
-
 ### 3. Lint the Code
 
 ```bash

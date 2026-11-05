@@ -14,16 +14,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { SURAH_LIST } from '../constants/quranData';
+import { toDateKey } from '../lib/date';
 
 const { width } = Dimensions.get('window');
 const CHART_WIDTH = width - Spacing.md * 2 - 32;
+const PRAYER_NAMES = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getDateKey(daysAgo: number): string {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split('T')[0];
+  return toDateKey(d);
 }
 
 function getShortDay(daysAgo: number): string {
@@ -174,7 +176,7 @@ function StreakBadge({ days, earned, C }: { days: number; earned: boolean; C: an
 export default function ReadingStatsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors: C, settings, dailyTasbeehHistory, tasbeehCount, bookmarks, notes, fastingDays, salahRecords, aiConversations } = useApp();
+  const { colors: C, settings, dailyTasbeehHistory, bookmarks, notes, fastingDays, salahRecords } = useApp();
   const [activeTab, setActiveTab] = useState<'quran' | 'hadith' | 'prayer'>('quran');
 
   // Convert SalahRecord[] array to date-keyed map for O(1) lookup
@@ -196,11 +198,14 @@ export default function ReadingStatsScreen() {
     const surah = SURAH_LIST[parseInt(k) - 1];
     return surah && v >= surah.versesCount;
   }).length;
-  const totalAyahsRead = progressEntries.reduce((sum, [, v]) => sum + v, 0);
+  const totalAyahsRead = progressEntries.reduce((sum, [key, lastAyah]) => {
+    const surah = SURAH_LIST[parseInt(key, 10) - 1];
+    return sum + (surah ? Math.min(lastAyah, surah.versesCount) : lastAyah);
+  }, 0);
   const totalAyahs = 6236;
   const completionPct = Math.min(100, Math.round((totalAyahsRead / totalAyahs) * 100));
-  const juzCompleted = Math.floor(totalAyahsRead / (totalAyahs / 30));
-  const pagesRead = Math.floor(totalAyahsRead / (totalAyahs / 604));
+  const juzCompleted = Math.min(30, Math.floor((totalAyahsRead / totalAyahs) * 30));
+  const pagesRead = Math.min(604, Math.floor((totalAyahsRead / totalAyahs) * 604));
 
   // ── Weekly Quran Bar Chart ──────────────────────────────────────────────────
   // We estimate daily verses from tasbeeh history as a proxy (no per-day verse tracking yet)
@@ -227,7 +232,7 @@ export default function ReadingStatsScreen() {
         salah: salahCount,
       };
     });
-  }, [dailyTasbeehHistory, salahRecords]);
+  }, [dailyTasbeehHistory, salahRecordMap]);
 
   const maxWeeklyVerses = Math.max(1, ...weeklyData.map(d => d.verses));
 
@@ -254,7 +259,6 @@ export default function ReadingStatsScreen() {
   const prayerCompletion30d = Math.round((totalPrayers30d / possiblePrayers30d) * 100);
 
   // Per-prayer completion rates
-  const PRAYER_NAMES = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const;
   const perPrayerRates = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const p of PRAYER_NAMES) counts[p] = 0;
@@ -271,22 +275,27 @@ export default function ReadingStatsScreen() {
 
   // ── Streaks ────────────────────────────────────────────────────────────────
   const prayerStreak = useMemo(() => {
-    let streak = 0;
-    for (let i = 0; i < 365; i++) {
-      const key = getDateKey(i);
+    const countFor = (key: string) => {
       const rec = records[key];
-      const count = rec ? Object.values(rec.prayers || {}).filter(Boolean).length : 0;
-      if (count >= 3) streak++; else break;
+      return rec ? Object.values(rec.prayers || {}).filter(Boolean).length : 0;
+    };
+    // Today is often still in progress, so don't reset the streak on it.
+    const start = countFor(getDateKey(0)) >= 3 ? 0 : 1;
+    let streak = 0;
+    for (let i = start; i < 365; i++) {
+      if (countFor(getDateKey(i)) >= 3) streak++;
+      else break;
     }
     return streak;
   }, [records]);
 
   const tasbeehStreak = useMemo(() => {
+    const byDate = new Map(dailyTasbeehHistory.map(h => [h.date, h.count]));
+    const start = (byDate.get(getDateKey(0)) || 0) > 0 ? 0 : 1;
     let streak = 0;
-    const sorted = [...dailyTasbeehHistory].sort((a, b) => b.date.localeCompare(a.date));
-    for (let i = 0; i < sorted.length; i++) {
-      const expected = getDateKey(i);
-      if (sorted[i]?.date === expected && sorted[i]?.count > 0) streak++; else break;
+    for (let i = start; i < 366; i++) {
+      if ((byDate.get(getDateKey(i)) || 0) > 0) streak++;
+      else break;
     }
     return streak;
   }, [dailyTasbeehHistory]);

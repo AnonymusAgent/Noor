@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AppProvider, useApp } from '../contexts/AppContext';
 import { AudioPlayerProvider } from '../contexts/AudioPlayerContext';
 import FloatingPlayer from '../components/FloatingPlayer';
@@ -12,9 +12,13 @@ import { preCacheAllCollections } from '../services/hadithService';
 
 function AppContent() {
   const { settings } = useApp();
+  const didInitRef = useRef(false);
 
-  // Kick off background pre-caching on first mount
+  // Kick off background pre-caching, once per app launch.
   useEffect(() => {
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+
     // Pre-cache top surahs and common translations
     initQuranOfflineCache(
       [1, 2, 3, 18, 36, 55, 67, 112, 113, 114],
@@ -22,17 +26,30 @@ function AppContent() {
     );
     // Pre-cache Tafsir Ibn Kathir for top 10 surahs
     preCacheTafsirBackground();
-    // Pre-cache first 3 pages of each Hadith collection in background
-    setTimeout(() => preCacheAllCollections(), 5000);
-    // Refresh GPS-based prayer notifications if enabled
+  }, [settings.selectedTranslation]);
+
+  // The hadith pre-cache timer must be cleared on unmount, otherwise a
+  // re-mount (fast refresh, dev reload) leaves orphaned timers behind.
+  useEffect(() => {
+    const timer = setTimeout(() => { preCacheAllCollections(); }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Refresh GPS-based prayer notifications whenever the reminder settings
+  // change (the previous effect never reacted to them).
+  useEffect(() => {
     const notifs = settings.notifications;
     const anyPrayerEnabled =
       notifs.fajrReminder || notifs.dhuhrReminder || notifs.asrReminder ||
       notifs.maghribReminder || notifs.ishaReminder;
-    if (anyPrayerEnabled) {
-      schedulePrayerNotificationsWithGPS(notifs).catch(() => {});
-    }
-  }, [settings.selectedTranslation]);
+    if (!anyPrayerEnabled) return;
+    schedulePrayerNotificationsWithGPS(
+      notifs,
+      false,
+      settings.prayerCalculationMethod,
+      settings.madhab,
+    ).catch(() => {});
+  }, [settings.notifications, settings.prayerCalculationMethod, settings.madhab]);
 
   return (
     <>

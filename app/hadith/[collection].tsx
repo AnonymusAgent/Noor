@@ -73,6 +73,10 @@ export default function HadithCollectionScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [loadingOnline, setLoadingOnline] = useState(false);
+  // Guards against a double fetch while a page request is in flight (React
+  // state updates are async, so `loadingOnline` alone is not reliable inside an
+  // effect that can fire twice).
+  const loadingRef = useRef(false);
   const [onlineError, setOnlineError] = useState(false);
   const [allPagesLoaded, setAllPagesLoaded] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -82,45 +86,70 @@ export default function HadithCollectionScreen() {
   useEffect(() => {
     const offline = getOfflineHadiths(collectionId).map(fromOffline);
     setHadiths(offline);
+    setCurrentPage(0);
+    setAllPagesLoaded(false);
+    setOnlineError(false);
     // If this collection has online source, start loading page 1
-    if (hasOnlineSource) {
+    if (isOnlineCollection(collectionId)) {
       loadNextPage(1, offline);
     } else {
       setAllPagesLoaded(true);
     }
+    // Only the collection identity should restart the load; `loadNextPage` is
+    // intentionally read through a ref to avoid re-running on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionId]);
 
   // ── Load a page from API ───────────────────────────────────────────────────
   const loadNextPage = useCallback(async (page: number, base?: UnifiedHadith[]) => {
-    if (loadingOnline) return;
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setLoadingOnline(true);
     setOnlineError(false);
+
+    // A page can legitimately come back empty when the remote dataset has holes
+    // in its numbering. Walk forward a few pages so paging never dead-ends on a
+    // gap, and only give up once we're past the end of the collection.
+    const lastPage = Math.max(1, totalPages(collectionId));
+    const maxAttempts = 3;
+    let targetPage = page;
+
     try {
-      const items = await fetchHadithPage(collectionId, page);
-      if (!items || items.length === 0) {
-        const exhausted = page > totalPages(collectionId);
-        setOnlineError(!exhausted);
-        setAllPagesLoaded(exhausted);
-        return;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (targetPage > lastPage) break;
+
+        const items = await fetchHadithPage(collectionId, targetPage);
+        if (items && items.length > 0) {
+          const newOnes = items.map(h => fromOnline(h, collectionId));
+          setHadiths(prev => {
+            const source = attempt === 0 && base ? base : prev;
+            // Avoid duplicates by number
+            const existingNums = new Set(source.map(h => h.number));
+            const unique = newOnes.filter(h => !existingNums.has(h.number));
+            return unique.length ? [...source, ...unique] : source;
+          });
+          setCurrentPage(targetPage);
+          if (targetPage >= lastPage) setAllPagesLoaded(true);
+          return;
+        }
+
+        targetPage += 1;
       }
-      const newOnes = items.map(h => fromOnline(h, collectionId));
-      setHadiths(prev => {
-        const source = base ?? prev;
-        // Avoid duplicates by number
-        const existingNums = new Set(source.map(h => h.number));
-        const unique = newOnes.filter(h => !existingNums.has(h.number));
-        return [...source, ...unique];
-      });
-      setCurrentPage(page);
-      if (page >= totalPages(collectionId)) {
+
+      // Nothing found from here on: mark the collection exhausted so the UI
+      // stops offering "Load More".
+      if (targetPage > lastPage) {
         setAllPagesLoaded(true);
+      } else {
+        setOnlineError(true);
       }
     } catch {
       setOnlineError(true);
     } finally {
+      loadingRef.current = false;
       setLoadingOnline(false);
     }
-  }, [collectionId, loadingOnline]);
+  }, [collectionId]);
 
   // ── Search filter ─────────────────────────────────────────────────────────
   const displayHadiths = searchQuery.trim()
@@ -270,7 +299,10 @@ export default function HadithCollectionScreen() {
         </View>
       </View>
     );
-  }, [C, expandedId, collectionId, isBookmarked]);
+  }, [
+    C, expandedId, collectionId, isBookmarked, addBookmark, removeBookmark,
+    meta?.name, shareHadith, toggleExpand,
+  ]);
 
   // ── Footer ─────────────────────────────────────────────────────────────────
   const renderFooter = () => {

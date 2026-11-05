@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, Spacing, Radius } from '../../constants/theme';
+import { Spacing, Radius, ThemeColors } from '../../constants/theme';
 import { DUAS, DUA_CATEGORIES } from '../../constants/duasData';
 import { useApp } from '../../contexts/AppContext';
 
@@ -13,7 +13,10 @@ export default function DuaCategoryScreen() {
   const { category } = useLocalSearchParams<{ category: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { favoritedDuas, toggleFavoriteDua, addBookmark, removeBookmark, isBookmarked } = useApp();
+  const { favoritedDuas, toggleFavoriteDua, addBookmark, removeBookmark, isBookmarked, colors: C } = useApp();
+  // The palette depends on the active theme, so the stylesheet is rebuilt when
+  // the theme changes instead of being frozen at the dark-mode defaults.
+  const styles = useMemo(() => createStyles(C), [C]);
 
   const catMeta = DUA_CATEGORIES.find(c => c.id === category);
   const duas = DUAS.filter(d => d.category === category);
@@ -46,7 +49,7 @@ export default function DuaCategoryScreen() {
           <MaterialIcons
             name={isOpen ? 'expand-less' : 'expand-more'}
             size={22}
-            color={Colors.textMuted}
+            color={C.textMuted}
           />
         </View>
 
@@ -71,7 +74,7 @@ export default function DuaCategoryScreen() {
             ) : null}
 
             <View style={styles.refCard}>
-              <MaterialIcons name="verified" size={14} color={Colors.success} />
+              <MaterialIcons name="verified" size={14} color={C.success} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.refSource}>{item.source}</Text>
                 <Text style={styles.refText}>{item.reference}</Text>
@@ -86,7 +89,7 @@ export default function DuaCategoryScreen() {
                 <MaterialIcons
                   name={isFav ? 'favorite' : 'favorite-border'}
                   size={18}
-                  color={isFav ? Colors.error : Colors.textMuted}
+                  color={isFav ? C.error : C.textMuted}
                 />
                 <Text style={styles.actionText}>Favorite</Text>
               </Pressable>
@@ -99,12 +102,12 @@ export default function DuaCategoryScreen() {
                 <MaterialIcons
                   name={isBook ? 'bookmark' : 'bookmark-border'}
                   size={18}
-                  color={isBook ? Colors.gold : Colors.textMuted}
+                  color={isBook ? C.gold : C.textMuted}
                 />
                 <Text style={styles.actionText}>Bookmark</Text>
               </Pressable>
               <Pressable style={styles.actionBtn} onPress={() => shareDua(item)}>
-                <MaterialIcons name="share" size={18} color={Colors.textMuted} />
+                <MaterialIcons name="share" size={18} color={C.textMuted} />
                 <Text style={styles.actionText}>Share</Text>
               </Pressable>
             </View>
@@ -118,7 +121,7 @@ export default function DuaCategoryScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={24} color={Colors.textPrimary} />
+          <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View style={styles.headerInfo}>
           <Text style={styles.emoji}>{catMeta?.icon}</Text>
@@ -146,7 +149,7 @@ export default function DuaCategoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row',

@@ -86,7 +86,7 @@ interface FallbackHadith {
   hadithnumber?: number;
   arabicnumber?: number;
   text?: string;
-  grades?: Array<{ grade?: string; name?: string }>;
+  grades?: { grade?: string; name?: string }[];
   reference?: { book?: number | string; hadith?: number | string };
 }
 
@@ -154,11 +154,11 @@ async function readCache(collection: string, page: number): Promise<CachedPage |
 async function writeCache(collection: string, page: number, items: HadithAPIItem[]): Promise<void> {
   if (!items.length) return;
   try {
-    const values: Array<[string, string]> = [
+    const total = remoteTotals[collection] || 0;
+    const values: [string, string][] = [
       [cacheKey(collection, page), JSON.stringify(items)],
       [cacheTimeKey(collection, page), String(Date.now())],
     ];
-    const total = remoteTotals[collection] || 0;
     if (total > 0) values.push([cacheTotalKey(collection), String(total)]);
     await AsyncStorage.multiSet(values);
   } catch {
@@ -346,8 +346,13 @@ async function loadFallbackCollection(collectionId: string): Promise<FallbackCol
 
     const result = { bookId, english, arabic };
     activeFallback = result;
-    const total = english.hadiths?.length || 0;
-    if (total) remoteTotals[collectionId] = total;
+    // Only trust the local length when it is at least as complete as the known
+    // total; a partial download must not silently shrink the collection.
+    const localTotal = english.hadiths?.length || 0;
+    const knownTotal = getCollectionTotal(collectionId);
+    if (localTotal && (!knownTotal || localTotal >= knownTotal)) {
+      remoteTotals[collectionId] = localTotal;
+    }
     return result;
   })();
 

@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
   TextInput, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Share, Modal, Alert,
+  ScrollView, Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -59,8 +59,7 @@ export default function AIGuideScreen() {
   const insets = useSafeAreaInsets();
   const {
     aiMessages, addAIMessage, clearAIChat,
-    aiConversations, createConversation, deleteConversation, pinConversation,
-    activeConversationId, setActiveConversationId,
+    createConversation, activeConversationId,
     updateConversationTitle,
     colors: C,
   } = useApp();
@@ -68,7 +67,6 @@ export default function AIGuideScreen() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState('');
-  const [showSidebar, setShowSidebar] = useState(false);
   const [showTopics, setShowTopics] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -82,7 +80,7 @@ export default function AIGuideScreen() {
 
   useEffect(() => {
     if (aiMessages.length > 0 || streamingText) scrollToBottom();
-  }, [aiMessages.length, streamingText]);
+  }, [aiMessages.length, streamingText, scrollToBottom]);
 
   const sendMessage = async (text?: string) => {
     const msg = (text || input).trim();
@@ -93,6 +91,9 @@ export default function AIGuideScreen() {
     setStreamingText('');
     setShowTopics(false);
 
+    // Ensure there is a conversation to attach the exchange to, otherwise the
+    // message list can never be restored from storage.
+    if (!activeConversationId) createConversation();
     await addAIMessage({ role: 'user', content: msg });
 
     // Build conversation context (last 12 messages)
@@ -129,23 +130,32 @@ export default function AIGuideScreen() {
 
       if (reader) {
         const decoder = new TextDecoder();
+        let buffer = '';
+        const handleLine = (line: string) => {
+          if (!line.startsWith('data:')) return;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') return;
+          try {
+            const data = JSON.parse(payload);
+            const delta = data.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              fullText += delta;
+              setStreamingText(fullText);
+            }
+          } catch { /* skip malformed */ }
+        };
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split('\n')) {
-            if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-              try {
-                const data = JSON.parse(line.slice(6));
-                const delta = data.choices?.[0]?.delta?.content || '';
-                if (delta) {
-                  fullText += delta;
-                  setStreamingText(fullText);
-                }
-              } catch { /* skip malformed */ }
-            }
-          }
+          buffer += decoder.decode(value, { stream: true });
+          // A network chunk can end mid-line — only consume complete lines and
+          // carry the remainder into the next read.
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) handleLine(line);
         }
+        if (buffer) handleLine(buffer);
       } else {
         const data = await response.json();
         fullText = data.choices?.[0]?.message?.content || 'Unable to generate a response. Please try again.';
@@ -154,8 +164,8 @@ export default function AIGuideScreen() {
       setStreamingText('');
       if (fullText) {
         await addAIMessage({ role: 'assistant', content: fullText });
-        // Auto-title first conversation
-        if (aiMessages.length === 0 && activeConversationId) {
+        // Auto-title the conversation from its first user message.
+        if (aiMessages.length <= 1 && activeConversationId) {
           const shortTitle = msg.length > 40 ? msg.slice(0, 40) + '...' : msg;
           updateConversationTitle(activeConversationId, shortTitle);
         }
@@ -180,11 +190,14 @@ export default function AIGuideScreen() {
     }
   };
 
-  const shareMessage = async (content: string) => {
+  const shareMessage = useCallback(async (content: string) => {
     try {
       await Share.share({ message: content + '\n\n— Islamic Guide App' });
     } catch { /* silent */ }
-  };
+  }, []);
+
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
 
   const renderMessage = useCallback(({ item, index }: { item: AIMessage; index: number }) => {
     const isUser = item.role === 'user';
@@ -224,7 +237,7 @@ export default function AIGuideScreen() {
                 </Pressable>
                 <Pressable
                   style={styles.msgAction}
-                  onPress={() => sendMessage('Please elaborate on that.')}
+                  onPress={() => sendMessageRef.current('Please elaborate on that.')}
                 >
                   <MaterialIcons name="refresh" size={13} color={C.textMuted} />
                   <Text style={[styles.msgActionText, { color: C.textMuted }]}>Elaborate</Text>
@@ -240,7 +253,7 @@ export default function AIGuideScreen() {
         </View>
       </View>
     );
-  }, [C, aiMessages]);
+  }, [C, aiMessages, shareMessage]);
 
   const showEmpty = aiMessages.length === 0 && !isLoading;
 

@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
-import { SURAH_LIST } from '../constants/quranData';
+import { toDateKey } from '../lib/date';
 import * as Location from 'expo-location';
 
 const { width } = Dimensions.get('window');
@@ -106,10 +106,10 @@ export default function RamadanScreen() {
   const [selectedGoal, setSelectedGoal] = useState(0);
   const [now, setNow] = useState(new Date());
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateKey();
   const todayFasted = fastingDays.find(d => d.date === today)?.fasted || false;
   const totalFasts = fastingDays.filter(d => d.fasted).length;
-  const thisMonthFasts = fastingDays.filter(d => d.fasted && d.date.startsWith(new Date().toISOString().slice(0, 7))).length;
+  const thisMonthFasts = fastingDays.filter(d => d.fasted && d.date.startsWith(today.slice(0, 7))).length;
   const readingProgress = settings.readingProgress;
   const surahsRead = Object.keys(readingProgress).length;
 
@@ -234,7 +234,7 @@ export default function RamadanScreen() {
               {Array.from({ length: 30 }, (_, i) => {
                 const d = new Date();
                 d.setDate(d.getDate() - (29 - i));
-                const dateStr = d.toISOString().split('T')[0];
+                const dateStr = toDateKey(d);
                 const fasted = fastingDays.find(fd => fd.date === dateStr)?.fasted || false;
                 const isToday = dateStr === today;
                 return (
@@ -258,13 +258,14 @@ export default function RamadanScreen() {
 
             {/* Fasting streak */}
             {(() => {
+              const fastedDates = new Set(fastingDays.filter(d => d.fasted).map(d => d.date));
+              // Today may not be logged yet — start yesterday in that case.
+              const cursor = new Date();
+              if (!fastedDates.has(toDateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
               let streak = 0;
-              const sortedDays = [...fastingDays].filter(d => d.fasted).sort((a, b) => b.date.localeCompare(a.date));
-              for (let i = 0; i < sortedDays.length; i++) {
-                const expected = new Date();
-                expected.setDate(expected.getDate() - i);
-                if (sortedDays[i]?.date === expected.toISOString().split('T')[0]) streak++;
-                else break;
+              while (streak < 366 && fastedDates.has(toDateKey(cursor))) {
+                streak++;
+                cursor.setDate(cursor.getDate() - 1);
               }
               return streak > 0 ? (
                 <View style={[styles.streakCard, { backgroundColor: `${C.gold}15`, borderColor: `${C.gold}30` }]}>

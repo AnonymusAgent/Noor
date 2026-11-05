@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchSurahWithTranslation, fetchSurah,
-  SurahData, SurahWithTranslation, searchQuran, isSurahCached,
+  fetchSurahWithTranslation, SurahWithTranslation, searchQuran, isSurahCached,
 } from '../services/quranService';
 
 export function useSurahList() {
@@ -15,7 +14,8 @@ export function useSurah(surahNumber: number, translationEdition: string = 'en.s
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isOfflineCached, setIsOfflineCached] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
+  const reloadTokenRef = useRef(-1);
 
   const load = useCallback(async () => {
     if (!surahNumber || surahNumber < 1 || surahNumber > 114) return;
@@ -23,8 +23,10 @@ export function useSurah(surahNumber: number, translationEdition: string = 'en.s
     setError(null);
 
     // Check if already cached for UI indicator
-    const cached = await isSurahCached(surahNumber, translationEdition);
-    setIsOfflineCached(cached);
+    // The cache probe is only a UI hint; a failure here must not block loading.
+    isSurahCached(surahNumber, translationEdition)
+      .then(setIsOfflineCached)
+      .catch(() => {});
 
     const MAX_ATTEMPTS = 3;
     let lastError: string | null = null;
@@ -40,7 +42,7 @@ export function useSurah(surahNumber: number, translationEdition: string = 'en.s
         setIsOfflineCached(true);
         setLoading(false);
         return;
-      } catch (e: any) {
+      } catch {
         lastError = attempt < MAX_ATTEMPTS
           ? `Loading… (attempt ${attempt}/${MAX_ATTEMPTS})`
           : 'Could not load Surah. Tap retry or check your connection.';
@@ -54,14 +56,22 @@ export function useSurah(surahNumber: number, translationEdition: string = 'en.s
 
     setError(lastError);
     setLoading(false);
-  }, [surahNumber, translationEdition, retryCount]);
+  }, [surahNumber, translationEdition]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Manual retry: re-run the loader without depending on a counter that the
+  // loader itself does not read (which made reload() a no-op).
+  useEffect(() => {
+    if (reloadToken === reloadTokenRef.current) return;
+    reloadTokenRef.current = reloadToken;
+    load();
+  }, [reloadToken, load]);
+
   const reload = useCallback(() => {
-    setRetryCount(c => c + 1);
+    setReloadToken(token => token + 1);
   }, []);
 
   return { data, loading, error, reload, isOfflineCached };

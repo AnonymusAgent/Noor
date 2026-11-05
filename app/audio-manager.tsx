@@ -4,8 +4,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Alert, Dimensions,
+  View, Text, StyleSheet, FlatList, Pressable, Alert, TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -13,11 +12,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
-import { Spacing, Radius, Shadow } from '../constants/theme';
+import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { SURAH_LIST, RECITERS } from '../constants/quranData';
-
-const { width } = Dimensions.get('window');
+import { getAudioUrl as getSurahAudioUrl } from '../services/quranService';
 
 // Audio directory
 const AUDIO_DIR = `${FileSystem.documentDirectory}quran_audio/`;
@@ -31,9 +29,11 @@ interface DownloadInfo {
   status: 'idle' | 'downloading' | 'downloaded' | 'error' | 'playing';
 }
 
+// Share the streaming URL builder so a download and the in-app player always
+// point at the same file (the CDN path is keyed by the reciter's identifier,
+// not its edition id).
 function getAudioUrl(surahNum: number, identifier: string): string {
-  const padded = String(surahNum).padStart(3, '0');
-  return `https://cdn.islamic.network/quran/audio-surah/128/${identifier}/${padded}.mp3`;
+  return getSurahAudioUrl(surahNum, identifier);
 }
 
 function getFilePath(surahNum: number, reciterId: string): string {
@@ -45,14 +45,6 @@ function formatSize(bytes?: number): string {
   if (!bytes) return '';
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDuration(surahNum: number): string {
-  // Approximate durations
-  const durations: Record<number, string> = {
-    1: '0:46', 2: '38:00', 3: '23:00', 4: '22:00', 5: '18:00',
-  };
-  return durations[surahNum] || '~';
 }
 
 export default function AudioManagerScreen() {
@@ -157,11 +149,12 @@ export default function AudioManagerScreen() {
         }));
         await scanDownloadedFiles();
       }
-    } catch (err) {
+    } catch {
       setDownloads(prev => ({
         ...prev,
         [key]: { ...prev[key], status: 'error' },
       }));
+      Alert.alert('Download Failed', 'The recitation could not be downloaded. Check your connection and try again.');
     }
   };
 
@@ -437,6 +430,25 @@ export default function AudioManagerScreen() {
         </Pressable>
       </View>
 
+      {/* Search — `search` already filters the list; without an input it was
+          permanently stuck on the unfiltered value. */}
+      <View style={[styles.searchBox, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
+        <MaterialIcons name="search" size={18} color={C.textMuted} />
+        <TextInput
+          style={[styles.searchInput, { color: C.textPrimary }]}
+          placeholder="Search surah by name or number..."
+          placeholderTextColor={C.textMuted}
+          value={search}
+          onChangeText={setSearch}
+          autoCorrect={false}
+        />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch('')} hitSlop={8}>
+            <MaterialIcons name="close" size={16} color={C.textMuted} />
+          </Pressable>
+        )}
+      </View>
+
       {/* Surah List */}
       <FlatList
         data={filteredSurahs}
@@ -452,6 +464,17 @@ export default function AudioManagerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+  },
+  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14 },
   header: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingTop: 4, marginBottom: Spacing.md },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },

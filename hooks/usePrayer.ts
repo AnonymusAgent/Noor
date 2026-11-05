@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import * as Location from 'expo-location';
 import {
   fetchPrayerTimesByCoords,
@@ -17,42 +17,50 @@ export function usePrayerTimes(method: number = 3, school: number = 0) {
   const [locationName, setLocationName] = useState<string>('');
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
 
-  useEffect(() => {
-    loadPrayerTimes();
-  }, [method, school]);
-
-  const loadPrayerTimes = async () => {
+  const loadPrayerTimes = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      // Ask for permission only once; re-prompting on every refresh is noisy and
+      // on iOS the second request never shows a dialog again.
+      const { status: existing } = await Location.getForegroundPermissionsAsync();
+      const status = existing === 'granted'
+        ? existing
+        : (await Location.requestForegroundPermissionsAsync()).status;
+
       if (status === 'granted') {
         const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         const { latitude, longitude } = location.coords;
         setCoordinates({ lat: latitude, lng: longitude });
 
+        // Reverse geocoding is cosmetic — never let it fail the whole refresh.
         const [data, geocode] = await Promise.all([
           fetchPrayerTimesByCoords(latitude, longitude, method, school),
-          Location.reverseGeocodeAsync({ latitude, longitude }),
+          Location.reverseGeocodeAsync({ latitude, longitude }).catch(() => []),
         ]);
 
         setPrayerData(data);
         if (geocode.length > 0) {
           const g = geocode[0];
-          setLocationName(`${g.city || g.subregion || ''}, ${g.country || ''}`);
+          const place = [g.city || g.subregion || g.district, g.country].filter(Boolean).join(', ');
+          setLocationName(place);
         }
       } else {
         // Fallback to Makkah
         const data = await fetchPrayerTimesByCity('Makkah', 'Saudi Arabia', method, school);
         setPrayerData(data);
-        setLocationName('Makkah, Saudi Arabia');
+        setLocationName('Makkah, Saudi Arabia (location unavailable)');
       }
-    } catch (e) {
+    } catch {
       setError('Unable to fetch prayer times. Please check your connection.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [method, school]);
+
+  useEffect(() => {
+    loadPrayerTimes();
+  }, [loadPrayerTimes]);
 
   const nextPrayer = prayerData ? getNextPrayer(prayerData.timings) : null;
 
@@ -75,15 +83,15 @@ export function useQibla() {
   const [error, setError] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
 
-  useEffect(() => {
-    getQiblaDirection();
-  }, []);
-
-  const getQiblaDirection = async () => {
+  const getQiblaDirection = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const { status: existing } = await Location.getForegroundPermissionsAsync();
+      const status = existing === 'granted'
+        ? existing
+        : (await Location.requestForegroundPermissionsAsync()).status;
+
       if (status === 'granted') {
         const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         const { latitude, longitude } = location.coords;
@@ -93,12 +101,16 @@ export function useQibla() {
       } else {
         setError('Location permission required for Qibla direction');
       }
-    } catch (e) {
+    } catch {
       setError('Unable to determine Qibla direction');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    getQiblaDirection();
+  }, [getQiblaDirection]);
 
   return { direction, distance, loading, error, coordinates, reload: getQiblaDirection };
 }

@@ -10,7 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius, Shadow } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { useQibla } from '../hooks/usePrayer';
-import { Magnetometer } from 'expo-sensors';
+import { Accelerometer, Magnetometer } from 'expo-sensors';
 
 const { width } = Dimensions.get('window');
 const COMPASS_SIZE = Math.min(width - 64, 320);
@@ -35,6 +35,41 @@ const TICKS = Array.from({ length: 72 }, (_, i) => ({
   medium: i % 3 === 0 && i % 6 !== 0,
 }));
 
+/**
+ * Tilt-compensated compass heading.
+ *
+ * A phone held flat can use the raw magnetometer X/Y pair, but as soon as it is
+ * tilted towards the horizon that pair is no longer horizontal and the reading
+ * drifts by up to tens of degrees — exactly the orientation people hold a phone
+ * in when lining up the Qibla. Projecting the magnetic vector onto the
+ * horizontal plane using the accelerometer gravity vector removes that error.
+ */
+function tiltCompensatedHeading(
+  mag: { x: number; y: number; z: number },
+  grav: { x: number; y: number; z: number } | null,
+): number | null {
+  if (!grav) return null;
+  const norm = Math.hypot(grav.x, grav.y, grav.z);
+  if (norm < 0.5) return null;
+
+  const gx = grav.x / norm;
+  const gy = grav.y / norm;
+  const gz = grav.z / norm;
+
+  // East = gravity x magnetic, North = magnetic x East (right-handed frame).
+  const ex = gy * mag.z - gz * mag.y;
+  const ey = gz * mag.x - gx * mag.z;
+  const ez = gx * mag.y - gy * mag.x;
+  if (Math.hypot(ex, ey, ez) < 1e-6) return null;
+
+  // North (horizontal component of the magnetic vector) only needs X/Y here,
+  // because the heading is the angle between East and North in that plane.
+  const nx = mag.y * ez - mag.z * ey;
+
+  const heading = Math.atan2(ey, nx) * (180 / Math.PI);
+  return (heading + 360) % 360;
+}
+
 function getCardinalLabel(deg: number): string {
   const d = ((deg % 360) + 360) % 360;
   if (d < 22.5 || d >= 337.5) return 'N';
@@ -47,8 +82,14 @@ function getCardinalLabel(deg: number): string {
   return 'NW';
 }
 
-function getAccuracyLevel(heading: number): { label: string; color: string; icon: string } {
-  // Simple heuristic — in real device this would use sensor accuracy
+/**
+ * expo-sensors' Magnetometer does not expose a calibration level, so estimate
+ * it from how stable the reading is: a device that needs the "figure 8" shake
+ * produces jittery values.
+ */
+function getAccuracyLevel(jitter: number): { label: string; color: string; icon: string } {
+  if (jitter > 12) return { label: 'Poor — move in a figure 8', color: '#F06A5A', icon: 'error-outline' };
+  if (jitter > 5) return { label: 'Fair', color: '#F0B450', icon: 'warning-amber' };
   return { label: 'Good', color: '#52C98A', icon: 'check-circle' };
 }
 
@@ -60,8 +101,10 @@ export default function QiblaScreen() {
 
   const [compassHeading, setCompassHeading] = useState(0);
   const [magnetometerAvailable, setMagnetometerAvailable] = useState<boolean | null>(null);
-  const [calibrating, setCalibrating] = useState(false);
-  const [sensorAccuracy, setSensorAccuracy] = useState<number>(3);
+
+  const [sensorJitter, setSensorJitter] = useState(0);
+  const headingRef = useRef(0);
+  const jitterRef = useRef(0);
 
   // Animated values
   const compassRotAnim = useRef(new Animated.Value(0)).current;
@@ -82,27 +125,62 @@ export default function QiblaScreen() {
   useEffect(() => {
     startPulse();
     let sub: ReturnType<typeof Magnetometer.addListener> | undefined;
+    let accelSub: ReturnType<typeof Accelerometer.addListener> | undefined;
+
+    // Latest gravity vector; null until the accelerometer emits a sample, in
+    // which case the raw (flat-device) magnetometer pair is used instead.
+    let gravity: { x: number; y: number; z: number } | null = null;
+
+    Accelerometer.isAvailableAsync()
+      .then(available => {
+        if (!available) return;
+        Accelerometer.setUpdateInterval(120);
+        accelSub = Accelerometer.addListener(({ x, y, z }) => {
+          gravity = { x, y, z };
+        });
+      })
+      .catch(() => { /* heading falls back to the raw magnetometer */ });
 
     Magnetometer.isAvailableAsync().then(available => {
       setMagnetometerAvailable(available);
       if (available) {
         Magnetometer.setUpdateInterval(80);
         sub = Magnetometer.addListener(data => {
-          // Calculate heading from magnetometer data
-          let angle = Math.atan2(data.y, data.x) * (180 / Math.PI);
-          if (angle < 0) angle += 360;
-          const smoothed = angle;
-          setCompassHeading(smoothed);
+          // Tilt-compensated when gravity is known, otherwise the flat-device
+          // approximation of the same computation.
+          const compensated = tiltCompensatedHeading(data, gravity);
+          let angle = compensated
+            ?? (() => {
+              const raw = Math.atan2(data.y, data.x) * (180 / Math.PI);
+              return raw < 0 ? raw + 360 : raw;
+            })();
+
+          // The raw magnetometer is very noisy at 80 ms intervals; blend with
+          // the previous value, taking the shortest way around the circle so
+          // 359° -> 1° does not spin the whole compass backwards.
+          const prev = headingRef.current;
+          const delta = ((angle - prev + 540) % 360) - 180;
+          const next = (prev + delta * 0.25 + 360) % 360;
+
+          headingRef.current = next;
+          jitterRef.current = jitterRef.current * 0.8 + Math.abs(delta) * 0.2;
+          setCompassHeading(next);
+          setSensorJitter(Math.round(jitterRef.current * 10) / 10);
         });
       }
     });
 
-    return () => sub?.remove();
-  }, []);
+    return () => {
+      sub?.remove();
+      accelSub?.remove();
+    };
+  }, [startPulse]);
 
   // Animate compass rose and qibla needle
   useEffect(() => {
     const compassTarget = -compassHeading;
+    // The needle overlays (rather than nests inside) the rotated rose, so it
+    // must be counter-rotated by the heading itself.
     const qiblaTarget = direction !== null ? direction - compassHeading : 0;
 
     Animated.parallel([
@@ -122,13 +200,13 @@ export default function QiblaScreen() {
       }),
     ]).start();
 
-    // Glow when aligned with Qibla (within 5 degrees)
+    // Glow when the device camera points at the Kaaba (within 5°).
     if (direction !== null) {
-      const diff = Math.abs(((qiblaTarget % 360) + 360) % 360);
-      const aligned = diff < 5 || diff > 355;
+      const facing = (((direction - compassHeading) % 360) + 360) % 360;
+      const aligned = facing < 5 || facing > 355;
       Animated.timing(glowAnim, { toValue: aligned ? 1 : 0, duration: 300, useNativeDriver: true }).start();
     }
-  }, [direction, compassHeading]);
+  }, [direction, compassHeading, compassRotAnim, needleRotAnim, glowAnim]);
 
   const compassRotStr = compassRotAnim.interpolate({
     inputRange: [-720, 720],
@@ -150,7 +228,7 @@ export default function QiblaScreen() {
     );
   }
 
-  const accuracy = getAccuracyLevel(compassHeading);
+  const accuracy = getAccuracyLevel(sensorJitter);
   const qiblaAngle = direction !== null ? Math.round(direction) : null;
   const headingAngle = Math.round(compassHeading);
   const cardinal = getCardinalLabel(compassHeading);
@@ -402,14 +480,16 @@ export default function QiblaScreen() {
       {!error && (
         <View style={[styles.statusBar, { marginHorizontal: Spacing.md, backgroundColor: `${C.info}10`, borderColor: `${C.info}20` }]}>
           <MaterialIcons
-            name={magnetometerAvailable ? 'sensors' : 'sensors-off'}
+            name={magnetometerAvailable ? accuracy.icon as any : 'sensors-off'}
             size={14}
-            color={magnetometerAvailable ? C.info : C.warning}
+            color={magnetometerAvailable ? accuracy.color : C.warning}
           />
           <Text style={[styles.statusBarText, { color: C.textMuted }]}>
-            {magnetometerAvailable
-              ? 'Live compass active. Move in a figure-8 pattern to calibrate.'
-              : 'Magnetometer unavailable. Qibla direction calculated from GPS only.'}
+            {Platform.OS === 'web'
+              ? 'Compass sensors are not available in the browser. Use the bearing below with a physical compass, or open the app on a phone.'
+              : magnetometerAvailable
+                ? `Compass accuracy: ${accuracy.label}. Move in a figure-8 pattern to recalibrate.`
+                : 'Magnetometer unavailable. Qibla direction calculated from GPS only.'}
           </Text>
         </View>
       )}

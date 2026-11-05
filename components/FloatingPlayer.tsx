@@ -41,9 +41,10 @@ export default function FloatingPlayer() {
   const progress = durationMs > 0 ? positionMs / durationMs : 0;
 
   const cycleRepeat = useCallback(() => {
-    const modes: RepeatMode[] = ['none', 'one', 'all'];
+    // Matches AppSettings['repeatMode'] — ayah/surah loop the current track.
+    const modes: RepeatMode[] = ['none', 'ayah', 'surah'];
     const idx = modes.indexOf(repeatMode);
-    setRepeatMode(modes[(idx + 1) % 3]);
+    setRepeatMode(modes[(idx + 1) % modes.length]);
   }, [repeatMode, setRepeatMode]);
 
   if (!nowPlaying) return null;
@@ -156,11 +157,20 @@ export default function FloatingPlayer() {
 
             {/* Progress Scrubber */}
             <View style={styles.scrubberWrap}>
-              <View style={[styles.scrubberTrack, { backgroundColor: C.cardBorder }]}>
+              <Pressable
+                style={[styles.scrubberTrack, { backgroundColor: C.cardBorder }]}
+                onPress={(e) => {
+                  const { locationX } = e.nativeEvent;
+                  const trackWidth = (e.currentTarget as any)?.offsetWidth;
+                  if (trackWidth && durationMs > 0) {
+                    seekTo((locationX / trackWidth) * durationMs);
+                  }
+                }}
+              >
                 <View style={[styles.scrubberFill, { width: `${Math.min(100, progress * 100)}%`, backgroundColor: C.gold }]}>
                   <View style={[styles.scrubberThumb, { backgroundColor: C.gold, borderColor: C.background }]} />
                 </View>
-              </View>
+              </Pressable>
               <View style={styles.timeRow}>
                 <Text style={[styles.timeText, { color: C.textMuted }]}>{formatTime(positionMs)}</Text>
                 <Text style={[styles.timeText, { color: C.textMuted }]}>{formatTime(durationMs)}</Text>
@@ -205,12 +215,12 @@ export default function FloatingPlayer() {
                 ]}
               >
                 <MaterialIcons
-                  name={repeatMode === 'one' ? 'repeat-one' : 'repeat'}
+                  name={repeatMode === 'ayah' ? 'repeat-one' : 'repeat'}
                   size={18}
                   color={repeatMode !== 'none' ? C.gold : C.textMuted}
                 />
                 <Text style={[styles.secBtnLabel, { color: repeatMode !== 'none' ? C.gold : C.textMuted }]}>
-                  {repeatMode === 'none' ? 'Off' : repeatMode === 'one' ? '1×' : 'All'}
+                  {repeatMode === 'none' ? 'Off' : repeatMode === 'ayah' ? 'Ayah' : 'Surah'}
                 </Text>
               </Pressable>
 

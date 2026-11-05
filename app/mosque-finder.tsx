@@ -3,11 +3,10 @@
  * Uses platform-split map renderer + OpenStreetMap Overpass API (no key required)
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, FlatList,
-  ActivityIndicator, Linking, Alert, TextInput, ScrollView,
-  Platform,
+  ActivityIndicator, Linking, TextInput, ScrollView, Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -48,48 +47,82 @@ async function fetchNearbyMosques(lat: number, lng: number, radiusM: number): Pr
     (
       node["amenity"="place_of_worship"]["religion"="muslim"](around:${radiusM},${lat},${lng});
       way["amenity"="place_of_worship"]["religion"="muslim"](around:${radiusM},${lat},${lng});
+      relation["amenity"="place_of_worship"]["religion"="muslim"](around:${radiusM},${lat},${lng});
       node["amenity"="place_of_worship"]["building"="mosque"](around:${radiusM},${lat},${lng});
+      way["building"="mosque"](around:${radiusM},${lat},${lng});
     );
-    out body;
-    >;
-    out skel qt;
+    out center tags;
   `.trim();
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
+  // Overpass rejects requests without a descriptive User-Agent / Referer
+  // (it is a shared community endpoint), and has no CORS headers for a plain
+  // browser POST, so web has to go through a CORS-friendly mirror.
+  let lastError: unknown = null;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+          'User-Agent': USER_AGENT,
+        },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+      if (!response.ok) throw new Error(`Overpass responded ${response.status}`);
+      return parseMosques(await response.json(), lat, lng);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Network request failed');
+}
 
-  if (!response.ok) throw new Error('Network request failed');
-  const data = await response.json();
+const USER_AGENT = 'IslamicGuide/1.0 (Expo; mosque finder)';
 
+// Main instance first, community mirror as a fallback when it is rate-limited.
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
+function parseMosques(data: any, lat: number, lng: number): Mosque[] {
   const mosques: Mosque[] = (data.elements || [])
-    .filter((el: any) => el.lat !== undefined && el.lon !== undefined)
     .map((el: any) => {
+      // Nodes carry lat/lon directly; ways and relations only report `center`.
+      const elLat = el.lat ?? el.center?.lat;
+      const elLon = el.lon ?? el.center?.lon;
+      if (typeof elLat !== 'number' || typeof elLon !== 'number') return null;
+
       const tags = el.tags || {};
-      const name = tags.name || tags['name:en'] || 'Mosque';
+      const name = tags.name || tags['name:en'] || tags['name:ar'] || 'Mosque';
+      const lowerName = name.toLowerCase();
       const type: Mosque['type'] =
-        tags.building === 'mosque' || name.toLowerCase().includes('masjid')
+        tags.building === 'mosque' || tags.amenity === 'place_of_worship' && lowerName.includes('masjid')
           ? 'mosque'
-          : name.toLowerCase().includes('centre') || name.toLowerCase().includes('center')
+          : lowerName.includes('centre') || lowerName.includes('center')
           ? 'islamic_centre'
           : 'prayer_room';
 
+      const address = [
+        [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' '),
+        tags['addr:city'],
+      ].filter(Boolean).join(', ');
+
       return {
-        id: String(el.id),
+        id: `${el.type ?? 'node'}/${el.id}`,
         name,
         type,
-        lat: el.lat,
-        lng: el.lon,
-        address: [tags['addr:street'], tags['addr:housenumber'], tags['addr:city']]
-          .filter(Boolean).join(', ') || undefined,
+        lat: elLat,
+        lng: elLon,
+        address: address || undefined,
         phone: tags.phone || tags['contact:phone'] || undefined,
         website: tags.website || tags['contact:website'] || undefined,
         openingHours: tags.opening_hours || undefined,
-        distance: haversineDistance(lat, lng, el.lat, el.lon),
-      };
+        distance: haversineDistance(lat, lng, elLat, elLon),
+      } as Mosque;
     })
+    .filter((mosque: Mosque | null): mosque is Mosque => mosque !== null)
     .sort((a: Mosque, b: Mosque) => (a.distance || 0) - (b.distance || 0));
 
   return mosques;
@@ -119,28 +152,35 @@ export default function MosqueFinderScreen() {
   const [search, setSearch] = useState('');
   const [fromCache, setFromCache] = useState(false);
 
+  // Restore the last result set while the GPS fix is in flight.
   useEffect(() => {
-    init();
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await AsyncStorage.getItem(CACHE_KEY);
+        if (cached && !cancelled) {
+          const { data, loc } = JSON.parse(cached);
+          if (Array.isArray(data) && loc) {
+            setMosques(data);
+            setLocation(loc);
+            setFromCache(true);
+          }
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const init = async () => {
-    try {
-      const cached = await AsyncStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const { data, loc } = JSON.parse(cached);
-        setMosques(data);
-        setLocation(loc);
-        setFromCache(true);
-      }
-    } catch { /* silent */ }
-    await requestLocation();
-  };
+  const searchMosquesRef = useRef<((loc: { lat: number; lng: number }, radiusKm: RadiusKm) => Promise<void>) | null>(null);
 
-  const requestLocation = async () => {
+  const requestLocation = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const { status: existing } = await Location.getForegroundPermissionsAsync();
+      const { status } = existing === 'granted'
+        ? { status: existing }
+        : await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setError('Location permission required to find nearby mosques.');
         setLoading(false);
@@ -149,14 +189,18 @@ export default function MosqueFinderScreen() {
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       setLocation(loc);
-      await searchMosques(loc, selectedRadius);
+      await searchMosquesRef.current?.(loc, selectedRadius);
     } catch {
       setError('Unable to get your location. Please try again.');
       setLoading(false);
     }
-  };
+  }, [selectedRadius]);
 
-  const searchMosques = async (loc: { lat: number; lng: number }, radiusKm: RadiusKm) => {
+  useEffect(() => {
+    requestLocation();
+  }, [requestLocation]);
+
+  const searchMosques = useCallback(async (loc: { lat: number; lng: number }, radiusKm: RadiusKm) => {
     setLoading(true);
     setError(null);
     setFromCache(false);
@@ -169,12 +213,13 @@ export default function MosqueFinderScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const getMarkerColor = (type: Mosque['type']): string => {
-    const colors = { mosque: '#C9A84C', islamic_centre: '#4CAF7D', prayer_room: '#5B8DEF' };
-    return colors[type];
-  };
+  // Keep the ref the location callback uses in sync with the latest closure.
+  useEffect(() => { searchMosquesRef.current = searchMosques; }, [searchMosques]);
+
+  const getMarkerColor = (type: Mosque['type']): string =>
+    MOSQUE_TYPE_INFO[type]?.color ?? MOSQUE_TYPE_INFO.mosque.color;
 
   const openNavigation = (mosque: Mosque) => {
     const url =

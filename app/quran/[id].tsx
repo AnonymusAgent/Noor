@@ -1,8 +1,7 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Share, Alert, Platform, Modal,
-  ScrollView, TextInput,
+  ActivityIndicator, Share, Modal, ScrollView, TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -12,16 +11,71 @@ import { useSurah } from '../../hooks/useQuran';
 import { useApp } from '../../contexts/AppContext';
 import { useAudioPlayer } from '../../contexts/AudioPlayerContext';
 import { SURAH_LIST, RECITERS, TRANSLATIONS } from '../../constants/quranData';
-import { Audio } from 'expo-av';
 import { fetchWordByWord } from '../../services/quranService';
-import { useLocalSearchParams as _useParams } from 'expo-router';
 
-// Tajweed color rules (simplified visual highlights)
-const TAJWEED_PATTERNS = [
-  { pattern: /([اوي])\s/g, color: '#E8C87A', label: 'Madd' },
-  { pattern: /(ن|م)\s/g, color: '#4CAF7D', label: 'Ghunna' },
-  { pattern: /([اأ]لل)/g, color: '#C9A84C', label: 'Lam Jalalah' },
+const TOGGLE_OPTIONS: { key: 'showTranslation' | 'showTransliteration' | 'showWordByWord'; label: string }[] = [
+  { key: 'showTranslation', label: 'Show Translation' },
+  { key: 'showTransliteration', label: 'Show Transliteration' },
+  { key: 'showWordByWord', label: 'Word-by-Word Mode' },
 ];
+
+const HIGHLIGHT_BG: Record<string, string> = {
+  yellow: 'rgba(255,215,0,0.15)',
+  green: 'rgba(76,175,80,0.15)',
+  blue: 'rgba(33,150,243,0.15)',
+  red: 'rgba(244,67,54,0.15)',
+};
+const HIGHLIGHT_BORDER: Record<string, string> = {
+  yellow: 'rgba(255,215,0,0.5)',
+  green: 'rgba(76,175,80,0.5)',
+  blue: 'rgba(33,150,243,0.5)',
+  red: 'rgba(244,67,54,0.5)',
+};
+const HIGHLIGHT_SOLID: Record<string, string> = {
+  yellow: '#FFD700', green: '#4CAF50', blue: '#2196F3', red: '#F44336',
+};
+
+// A pragmatic subset of the Tajweed rules that matter most for recitation:
+// ghunna (نّ/مّ), qalqalah letters and madd elongation. Colouring these spans is
+// enough to guide the eye without shipping a full tajweed text corpus.
+const TAJWEED_RULES: { name: string; colorKey: 'tajweedGhunna' | 'tajweedMadd' | 'tajweedQalqalah'; pattern: RegExp }[] = [
+  { name: 'ghunna', colorKey: 'tajweedGhunna', pattern: /[نم]ّ/g },
+  // Madd: the elongation letters carrying hamza/maddah, plus a standing fatha.
+  { name: 'madd', colorKey: 'tajweedMadd', pattern: /[آإأؤئٰ]|\u0653/g },
+  { name: 'qalqalah', colorKey: 'tajweedQalqalah', pattern: /[قطبجد]/g },
+];
+
+interface TajweedSegment { text: string; colorKey?: string }
+
+function segmentTajweed(text: string): TajweedSegment[] {
+  const marks = new Array<{ start: number; end: number; colorKey: string }>();
+
+  for (const rule of TAJWEED_RULES) {
+    rule.pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = rule.pattern.exec(text)) !== null) {
+      if (match[0].length === 0) { rule.pattern.lastIndex += 1; continue; }
+      const start = match.index;
+      const end = start + match[0].length;
+      // First matching rule wins, so ranges never overlap.
+      if (marks.some(m => start < m.end && end > m.start)) continue;
+      marks.push({ start, end, colorKey: rule.colorKey });
+    }
+  }
+
+  if (marks.length === 0) return [{ text }];
+
+  marks.sort((a, b) => a.start - b.start);
+  const segments: TajweedSegment[] = [];
+  let cursor = 0;
+  for (const mark of marks) {
+    if (mark.start > cursor) segments.push({ text: text.slice(cursor, mark.start) });
+    segments.push({ text: text.slice(mark.start, mark.end), colorKey: mark.colorKey });
+    cursor = mark.end;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+  return segments;
+}
 
 interface WordData {
   id: number;
@@ -49,22 +103,25 @@ export default function SurahScreen() {
   const [noteTags, setNoteTags] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
-  const HIGHLIGHT_BG: Record<string, string> = {
-    yellow: 'rgba(255,215,0,0.15)',
-    green: 'rgba(76,175,80,0.15)',
-    blue: 'rgba(33,150,243,0.15)',
-    red: 'rgba(244,67,54,0.15)',
-  };
-  const HIGHLIGHT_BORDER: Record<string, string> = {
-    yellow: 'rgba(255,215,0,0.5)',
-    green: 'rgba(76,175,80,0.5)',
-    blue: 'rgba(33,150,243,0.5)',
-    red: 'rgba(244,67,54,0.5)',
-  };
-  const HIGHLIGHT_SOLID: Record<string, string> = {
-    yellow: '#FFD700', green: '#4CAF50', blue: '#2196F3', red: '#F44336',
-  };
   const [currentAyah, setCurrentAyah] = useState<number | null>(null);
+  const flatListRef = useRef<FlatList<any>>(null);
+
+  // Keep the highlight on the ayah the reader last interacted with, and restore
+  // the saved position when the surah opens.
+  useEffect(() => {
+    const lastAyah = settings.readingProgress?.[surahNum];
+    setCurrentAyah(lastAyah && lastAyah > 0 ? lastAyah : null);
+  }, [surahNum, settings.readingProgress]);
+
+  const scrollToAyah = useCallback((ayahNumber: number) => {
+    if (!data?.arabic?.ayahs?.length) return;
+    const index = data.arabic.ayahs.findIndex(a => a.numberInSurah === ayahNumber);
+    if (index < 0) return;
+    // A FlatList cannot scroll before its first layout pass.
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.2 });
+    });
+  }, [data]);
   const [selectedAyah, setSelectedAyah] = useState<number | null>(null);
   const [wordByWordData, setWordByWordData] = useState<Record<number, WordData[]>>({});
   const [loadingWBW, setLoadingWBW] = useState<number | null>(null);
@@ -95,7 +152,7 @@ export default function SurahScreen() {
     }
   };
 
-  const loadWordByWord = async (ayahNum: number) => {
+  const loadWordByWord = useCallback(async (ayahNum: number) => {
     if (wordByWordData[ayahNum] || loadingWBW === ayahNum) return;
     setLoadingWBW(ayahNum);
     try {
@@ -104,7 +161,7 @@ export default function SurahScreen() {
     } catch { /* silent */ } finally {
       setLoadingWBW(null);
     }
-  };
+  }, [wordByWordData, loadingWBW, surahNum]);
 
   const playAudio = async () => {
     if (isThisSurahPlaying) {
@@ -114,15 +171,15 @@ export default function SurahScreen() {
     }
   };
 
-  const shareAyah = async (ayahNum: number) => {
+  const shareAyah = useCallback(async (ayahNum: number) => {
     const ayah = data?.arabic?.ayahs[ayahNum - 1];
     const translation = data?.translation?.ayahs[ayahNum - 1];
     if (!ayah) return;
     const text = `${ayah.text}\n\n"${translation?.text || ''}"\n\n— Quran ${surahNum}:${ayahNum} (${surahMeta?.englishName})`;
     await Share.share({ message: text });
-  };
+  }, [data, surahNum, surahMeta?.englishName]);
 
-  const bookmarkAyah = (ayahNum: number) => {
+  const bookmarkAyah = useCallback((ayahNum: number) => {
     const ref = `quran_${surahNum}_${ayahNum}`;
     if (isBookmarked(ref)) {
       removeBookmark(ref);
@@ -135,7 +192,10 @@ export default function SurahScreen() {
       });
     }
     updateReadingProgress(surahNum, ayahNum, totalAyahs);
-  };
+  }, [
+    isBookmarked, addBookmark, removeBookmark, updateReadingProgress,
+    surahNum, surahMeta?.transliteration, data, totalAyahs,
+  ]);
 
   const renderAyah = useCallback(({ item, index }: { item: any; index: number }) => {
     const ayahNum = item.numberInSurah;
@@ -161,6 +221,7 @@ export default function SurahScreen() {
         ]}
         onPress={() => {
           setSelectedAyah(isSelected ? null : ayahNum);
+          setCurrentAyah(ayahNum);
           if (!isSelected && settings.showWordByWord) loadWordByWord(ayahNum);
           updateReadingProgress(surahNum, ayahNum, totalAyahs);
         }}
@@ -187,7 +248,16 @@ export default function SurahScreen() {
 
         {/* Arabic Text */}
         <Text style={[styles.arabicText, { fontSize: settings.arabicFontSize, color: C.textArabic }]}>
-          {item.text}
+          {settings.showTajweed
+            ? segmentTajweed(item.text ?? '').map((segment, si) => (
+                <Text
+                  key={si}
+                  style={segment.colorKey ? { color: (C as unknown as Record<string, string>)[segment.colorKey] } : undefined}
+                >
+                  {segment.text}
+                </Text>
+              ))
+            : item.text}
         </Text>
 
         {/* Word by Word Mode */}
@@ -251,8 +321,10 @@ export default function SurahScreen() {
             <Pressable
               style={styles.ayahActionBtn}
               onPress={() => {
-                updateSettings({ showWordByWord: !settings.showWordByWord });
+                // Toggling this off should not leave the words on screen; the
+                // disabled state is what reveals the per-ayah control.
                 if (!settings.showWordByWord) loadWordByWord(ayahNum);
+                updateSettings({ showWordByWord: !settings.showWordByWord });
               }}
             >
               <MaterialIcons
@@ -290,7 +362,12 @@ export default function SurahScreen() {
         )}
       </Pressable>
     );
-  }, [data, settings, selectedAyah, currentAyah, wordByWordData, loadingWBW, C, getHighlight, addHighlight, removeHighlight]);
+  }, [
+    data, settings, selectedAyah, currentAyah, wordByWordData, loadingWBW, C,
+    getHighlight, isBookmarked, updateReadingProgress, loadWordByWord, router,
+    setLastRead, shareAyah, bookmarkAyah, surahNum, surahMeta?.transliteration,
+    totalAyahs, updateSettings,
+  ]);
 
   if (loading) {
     return (
@@ -361,11 +438,30 @@ export default function SurahScreen() {
 
       {/* Verses */}
       <FlatList
+        ref={flatListRef}
         data={data?.arabic?.ayahs || []}
         renderItem={renderAyah}
         keyExtractor={item => String(item.numberInSurah)}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
+        extraData={selectedAyah}
+        onScrollToIndexFailed={({ index }) => {
+          // Long surahs are virtualised; fall back to an approximate offset.
+          flatListRef.current?.scrollToOffset({ offset: index * 120, animated: true });
+        }}
+        ListHeaderComponent={
+          currentAyah && currentAyah > 1 ? (
+            <Pressable
+              style={[styles.resumeBar, { backgroundColor: `${C.gold}12`, borderColor: `${C.gold}25` }]}
+              onPress={() => scrollToAyah(currentAyah)}
+            >
+              <MaterialIcons name="bookmark" size={14} color={C.gold} />
+              <Text style={[styles.resumeText, { color: C.gold }]}>
+                Continue from ayah {currentAyah}
+              </Text>
+            </Pressable>
+          ) : null
+        }
       />
 
       {/* Audio Player Bar */}
@@ -515,7 +611,11 @@ export default function SurahScreen() {
                 <MaterialIcons name="close" size={24} color={C.textPrimary} />
               </Pressable>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={styles.settingsScroll}
+              contentContainerStyle={styles.settingsScrollContent}
+            >
               {/* Font Size */}
               <Text style={[styles.settingLabel, { color: C.textMuted }]}>Arabic Font Size: {settings.arabicFontSize}px</Text>
               <View style={styles.sliderRow}>
@@ -533,22 +633,21 @@ export default function SurahScreen() {
               </View>
 
               {/* Toggle Options */}
-              {[
-                { key: 'showTranslation', label: 'Show Translation' },
-                { key: 'showTransliteration', label: 'Show Transliteration' },
-                { key: 'showWordByWord', label: 'Word-by-Word Mode' },
-              ].map(opt => (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.toggleRow, { borderBottomColor: C.cardBorder }]}
-                  onPress={() => updateSettings({ [opt.key]: !settings[opt.key as keyof typeof settings] })}
-                >
-                  <Text style={[styles.toggleLabel, { color: C.textPrimary }]}>{opt.label}</Text>
-                  <View style={[styles.toggle, { backgroundColor: C.cardBorder }, settings[opt.key as keyof typeof settings] && [styles.toggleOn, { backgroundColor: C.gold }]]}>
-                    <View style={[styles.toggleThumb, { backgroundColor: C.textMuted }, settings[opt.key as keyof typeof settings] && [styles.toggleThumbOn, { backgroundColor: C.primaryDark }]]} />
-                  </View>
-                </Pressable>
-              ))}
+              {TOGGLE_OPTIONS.map(opt => {
+                const enabled = Boolean(settings[opt.key]);
+                return (
+                  <Pressable
+                    key={opt.key}
+                    style={[styles.toggleRow, { borderBottomColor: C.cardBorder }]}
+                    onPress={() => updateSettings({ [opt.key]: !enabled })}
+                  >
+                    <Text style={[styles.toggleLabel, { color: C.textPrimary }]}>{opt.label}</Text>
+                    <View style={[styles.toggle, { backgroundColor: C.cardBorder }, enabled && [styles.toggleOn, { backgroundColor: C.gold }]]}>
+                      <View style={[styles.toggleThumb, { backgroundColor: C.textMuted }, enabled && [styles.toggleThumbOn, { backgroundColor: C.primaryDark }]]} />
+                    </View>
+                  </Pressable>
+                );
+              })}
 
               {/* Reciter Selection */}
               <Text style={[styles.settingLabel, { color: C.textMuted }]}>Reciter</Text>
@@ -595,6 +694,10 @@ export default function SurahScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // Without a bounded height the settings ScrollView expands forever and the
+  // last options (translation list) can never be reached.
+  settingsScroll: { flex: 1 },
+  settingsScrollContent: { paddingBottom: Spacing.xl },
   center: { justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingText: { fontSize: 15 },
   errorText: { fontSize: 15, textAlign: 'center', paddingHorizontal: 32 },
@@ -633,6 +736,18 @@ const styles = StyleSheet.create({
   surahBannerInfo: { fontSize: 12 },
   surahBannerDot: { fontSize: 12 },
   bismillah: { fontSize: 22, marginTop: Spacing.md, fontWeight: '400' },
+  resumeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+  },
+  resumeText: { fontSize: 12, fontWeight: '600' },
   listContent: { paddingBottom: 100 },
   ayahContainer: {
     padding: Spacing.md,

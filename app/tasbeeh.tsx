@@ -21,11 +21,14 @@ const PRESETS = [
 export default function TasbeehScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tasbeehCount, setTasbeehCount, dailyTasbeehHistory, colors: C } = useApp();
+  const { setTasbeehCount, tasbeehCount, dailyTasbeehHistory, settings, colors: C } = useApp();
   const [count, setCount] = useState(0);
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[0]);
   const [target, setTarget] = useState(33);
-  const [totalCount, setTotalCount] = useState(0);
+  // Today's tally lives in context (persisted per day), so it must be the
+  // single source of truth — a local mirror started back at 0 on every mount.
+  const totalCount = tasbeehCount;
+  // Session-level mute; the app-wide Haptic Feedback setting still applies.
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
 
   const progress = Math.min(count / target, 1);
@@ -34,10 +37,8 @@ export default function TasbeehScreen() {
   const handlePress = () => {
     const newCount = count + 1;
     setCount(newCount);
-    const newTotal = totalCount + 1;
-    setTotalCount(newTotal);
-    setTasbeehCount(newTotal);
-    if (vibrationEnabled && Platform.OS !== 'web') {
+    setTasbeehCount(totalCount + 1);
+    if (vibrationEnabled && settings.hapticFeedback && Platform.OS !== 'web') {
       if (newCount % target === 0) Vibration.vibrate([0, 100, 50, 100]);
       else Vibration.vibrate(30);
     }
@@ -97,7 +98,7 @@ export default function TasbeehScreen() {
           >
             <View style={styles.counterInner}>
               <Text style={[styles.countDisplay, { color: C.textPrimary }]}>{count % target === 0 && count > 0 ? target : count % target}</Text>
-              <Text style={[styles.countTotal, { color: C.textMuted }]}>Total: {count}</Text>
+              <Text style={[styles.countTotal, { color: C.textMuted }]}>Session: {count} · Today: {totalCount}</Text>
               <Text style={[styles.countRemaining, { color: C.gold }]}>
                 {target - (count % target) === target ? 'Ready' : `${target - (count % target)} more`}
               </Text>
@@ -120,7 +121,15 @@ export default function TasbeehScreen() {
           <Text style={[styles.tapBtnArabic, { color: `${C.primaryDark}80` }]}>اضغط</Text>
         </Pressable>
 
-        <Pressable style={styles.resetBtn} onPress={() => setCount(0)}>
+        <Pressable
+          style={styles.resetBtn}
+          onPress={() => {
+            setCount(0);
+            // Also restart today's recorded tally, otherwise "Today" keeps the
+            // old number and the next tap resumes from it.
+            setTasbeehCount(0);
+          }}
+        >
           <MaterialIcons name="refresh" size={18} color={C.textMuted} />
           <Text style={[styles.resetText, { color: C.textMuted }]}>Reset Counter</Text>
         </Pressable>
