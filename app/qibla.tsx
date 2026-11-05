@@ -238,7 +238,9 @@ export default function QiblaScreen() {
       {/* Header */}
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.headerBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.headerBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={styles.headerCenter}>

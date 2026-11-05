@@ -63,6 +63,7 @@ const QUICK_ACTIONS = [
   { id: 'hifz', title: 'Hifz', subtitle: 'Memorize', icon: 'psychology', color: '#2D4A2D', route: '/hifz' },
   { id: 'names', title: 'Names', subtitle: 'Islamic', icon: 'child-care', color: '#2D6B8A', route: '/islamic-names' },
   { id: 'mosque', title: 'Mosques', subtitle: 'Near Me', icon: 'location-on', color: '#2D6B2D', route: '/mosque-finder' },
+  { id: 'zakat', title: 'Zakat', subtitle: 'Calculator', icon: 'calculate', color: '#1B5E4A', route: '/zakat-calculator' },
 ];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

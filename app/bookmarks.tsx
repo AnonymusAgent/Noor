@@ -5,13 +5,14 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp, Bookmark } from '../contexts/AppContext';
+import { DUAS } from '../constants/duasData';
 
 type FilterType = 'all' | 'quran' | 'hadith' | 'dua';
 
 export default function BookmarksScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { bookmarks, removeBookmark, colors: C } = useApp();
+  const { bookmarks, removeBookmark, favoritedDuas, colors: C } = useApp();
   const [filter, setFilter] = useState<FilterType>('all');
 
   const filtered = filter === 'all' ? bookmarks : bookmarks.filter(b => b.type === filter);
@@ -31,19 +32,32 @@ export default function BookmarksScreen() {
   const handlePress = (bookmark: Bookmark) => {
     const ref = bookmark.reference;
     if (ref.startsWith('quran_')) {
+      // `quran_<surah>` or `quran_<surah>_<ayah>` — pass the ayah through so the
+      // reader can jump straight to it instead of dropping the user at verse 1.
       const parts = ref.replace('quran_', '').split('_');
-      router.push(`/quran/${parts[0]}` as any);
+      router.push({
+        pathname: '/quran/[id]',
+        params: { id: parts[0], ayah: parts[1] ?? '' },
+      } as any);
+    } else if (ref.startsWith('tafsir_')) {
+      const parts = ref.replace('tafsir_', '').split('_');
+      router.push(`/tafsir/${parts[0]}` as any);
     } else if (ref.startsWith('hadith_')) {
       router.push('/hadith' as any);
     } else if (ref.startsWith('dua_')) {
-      router.push('/duas' as any);
+      // Open the dua's own category so the verse is right there.
+      const duaId = ref.replace('dua_', '');
+      const dua = DUAS.find(d => d.id === duaId);
+      router.push(dua ? (`/duas/${dua.category}` as any) : ('/favorite-duas' as any));
     }
   };
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: C.cardBorder }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View>
@@ -69,6 +83,23 @@ export default function BookmarksScreen() {
           </Pressable>
         ))}
       </View>
+
+      {favoritedDuas.length > 0 && (
+        <Pressable
+          style={({ pressed }) => [
+            styles.favShortcut,
+            { backgroundColor: `${C.error}12`, borderColor: `${C.error}30` },
+            pressed && { opacity: 0.85 },
+          ]}
+          onPress={() => router.push('/favorite-duas' as any)}
+        >
+          <MaterialIcons name="favorite" size={18} color={C.error} />
+          <Text style={[styles.favShortcutText, { color: C.textPrimary }]}>
+            {favoritedDuas.length} favorite dua{favoritedDuas.length === 1 ? '' : 's'}
+          </Text>
+          <MaterialIcons name="chevron-right" size={18} color={C.textMuted} />
+        </Pressable>
+      )}
 
       <FlatList
         data={filtered}
@@ -108,6 +139,18 @@ export default function BookmarksScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  favShortcut: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  favShortcutText: { flex: 1, fontSize: 13, fontWeight: '600' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -5,6 +5,7 @@
 
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import type { NotificationSettings } from '../contexts/AppContext';
 
 const GPS_UPDATE_KEY = 'prayer_gps_last_update';
@@ -22,10 +23,36 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// ── Android channel ──────────────────────────────────────────────────────────
+
+const ANDROID_CHANNEL_ID = 'prayer-reminders';
+let channelReady = false;
+
+/**
+ * Android 8+ ignores notifications that are not attached to an existing
+ * channel, and `expo-notifications` does not create one for scheduled
+ * notifications. Every prayer reminder was silently dropped on modern Android
+ * because of this. The channel only has to exist once per launch.
+ */
+async function ensureAndroidChannel(): Promise<void> {
+  if (Platform.OS !== 'android' || channelReady) return;
+  try {
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+      name: 'Prayer & Daily Reminders',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+    channelReady = true;
+  } catch { /* older Android — channel is optional there */ }
+}
+
 // ── Permission ───────────────────────────────────────────────────────────────
 
 export async function requestNotificationPermission(): Promise<boolean> {
   try {
+    await ensureAndroidChannel();
     const { status: existing } = await Notifications.getPermissionsAsync();
     if (existing === 'granted') return true;
     const { status } = await Notifications.requestPermissionsAsync();
@@ -50,7 +77,13 @@ async function scheduleDaily(
     await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
     await Notifications.scheduleNotificationAsync({
       identifier,
-      content: { title, body, sound: true, data: { type: identifier } },
+      content: {
+        title,
+        body,
+        sound: 'default',
+        data: { type: identifier },
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_ID } : {}),
+      },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour,
@@ -98,6 +131,8 @@ export async function schedulePrayerNotificationsWithGPS(
   calculationMethod = 3,
   school = 0,
 ): Promise<{ success: boolean; source: 'gps' | 'fallback' }> {
+  await ensureAndroidChannel();
+
   // Rate-limit GPS updates
   if (!forceRefresh) {
     try {
@@ -335,6 +370,7 @@ export async function applyAllNotificationSettings(
 ): Promise<{ prayerSource: 'gps' | 'fallback' }> {
   const hasPermission = await requestNotificationPermission();
   if (!hasPermission) return { prayerSource: 'fallback' };
+  await ensureAndroidChannel();
 
   await scheduleDailyAyah(notifSettings.dailyAyah);
   await scheduleDailyHadith(notifSettings.dailyHadith);

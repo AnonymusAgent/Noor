@@ -2,26 +2,36 @@
   "expo": {
     "name": "IslamicGuide",
     "slug": "islamic-guide",
-    "version": "1.0.0",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "islamicguide",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.islamicguide.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Used to calculate accurate prayer times, the Qibla direction and nearby mosques."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0A1A14"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.islamicguide.app"
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/logo.png"
+      "favicon": "./assets/images/logo.png",
+      "name": "IslamicGuide",
+      "shortName": "IslamicGuide",
+      "themeColor": "#0A1A14",
+      "backgroundColor": "#0A1A14",
+      "description": "Quran, Hadith, duas and prayer companion with GPS prayer times, Qibla compass, tafsir and zakat calculator."
     },
     "plugins": [
       "expo-router",
@@ -31,13 +41,18 @@
           "image": "./assets/images/logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#0A1A14",
+          "dark": {
+            "image": "./assets/images/logo.png",
+            "backgroundColor": "#0A1A14"
+          }
         }
       ],
       "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "description": "Quran, Hadith, duas and prayer companion — prayer times, Qibla, tasbeeh, tafsir and more."
   }
 }

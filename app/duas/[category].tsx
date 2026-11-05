@@ -120,7 +120,9 @@ export default function DuaCategoryScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View style={styles.headerInfo}>

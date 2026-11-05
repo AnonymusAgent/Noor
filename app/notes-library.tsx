@@ -343,7 +343,9 @@ export default function NotesLibraryScreen() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerTop}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={{ flex: 1 }}>

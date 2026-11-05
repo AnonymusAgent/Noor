@@ -16,12 +16,12 @@ type Gender = 'all' | 'boy' | 'girl';
 export default function IslamicNamesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors: C } = useApp();
+  // Favourites live in the context store (persisted), not in local state.
+  const { colors: C, nameFavorites: favorites, toggleNameFavorite } = useApp();
   const [search, setSearch] = useState('');
   const [gender, setGender] = useState<Gender>('all');
   const [category, setCategory] = useState('all');
   const [selected, setSelected] = useState<IslamicName | null>(null);
-  const [favorites, setFavorites] = useState<string[]>([]);
 
   const filtered = ISLAMIC_NAMES.filter(n => {
     const matchGender = gender === 'all' || n.gender === gender;
@@ -33,9 +33,7 @@ export default function IslamicNamesScreen() {
     return matchGender && matchCat && matchSearch;
   });
 
-  const toggleFav = (id: string) => {
-    setFavorites(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-  };
+  const toggleFav = (id: string) => toggleNameFavorite(id);
 
   const getPopularityColor = (p: string) => {
     if (p === 'very popular') return C.success;
@@ -48,7 +46,9 @@ export default function IslamicNamesScreen() {
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={styles.headerCenter}>

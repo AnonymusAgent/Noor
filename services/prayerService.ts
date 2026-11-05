@@ -113,7 +113,8 @@ export async function fetchMonthlyPrayerTimes(
   
   if (!response.ok) throw new Error('Failed to fetch monthly prayer times');
   const data = await response.json();
-  return data.data || [];
+  // Normalise every day, otherwise each row still carries "HH:MM (TZ)".
+  return (data.data || []).map((day: PrayerTimesData) => normalizePrayerTimesData(day));
 }
 
 /** Strips AlAdhan's timezone suffixes so timings are always `HH:MM`. */

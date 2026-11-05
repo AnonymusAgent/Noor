@@ -10,11 +10,13 @@ import { Spacing, Radius } from '../constants/theme';
 import { useApp, NotificationSettings } from '../contexts/AppContext';
 import { TRANSLATIONS, RECITERS } from '../constants/quranData';
 import { CALCULATION_METHODS, MADHABS } from '../constants/prayerData';
+import { APP_NAME, APP_VERSION, APP_DESCRIPTION } from '../constants/appInfo';
 import {
   requestNotificationPermission,
   applyAllNotificationSettings,
   cancelAllNotifications,
 } from '../services/notificationService';
+import { clearAllCaches, formatBytes } from '../services/cacheService';
 
 type ThemeOption = 'dark' | 'light' | 'system';
 
@@ -25,6 +27,25 @@ export default function SettingsScreen() {
   const [notifPermission, setNotifPermission] = useState<boolean | null>(null);
   const [showSchedulePicker, setShowSchedulePicker] = useState<'start' | 'end' | null>(null);  const [tempHour, setTempHour] = useState(0);
   const [tempMinute, setTempMinute] = useState(0);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const handleClearCache = async () => {
+    if (clearingCache) return;
+    setClearingCache(true);
+    try {
+      const { removedKeys, freedBytes } = await clearAllCaches();
+      Alert.alert(
+        'Cache Cleared',
+        removedKeys > 0
+          ? `Freed ${formatBytes(freedBytes)} across ${removedKeys} cached item${removedKeys === 1 ? '' : 's'}. Bookmarks, notes and progress were kept.`
+          : 'There was nothing cached to remove — your saved data was untouched.',
+      );
+    } catch {
+      Alert.alert('Could not clear cache', 'Please try again.');
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   const handleThemeChange = (theme: ThemeOption) => {
     updateSettings({ theme });
@@ -175,7 +196,9 @@ export default function SettingsScreen() {
       {/* Header */}
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={{ flex: 1 }}>
@@ -706,25 +729,42 @@ export default function SettingsScreen() {
         {/* ── About ─────────────────────────────────────────────────────────── */}
         <Section title="About">
           <View style={[styles.aboutCard, { backgroundColor: `${C.primary}15` }]}>
-            <Text style={[styles.aboutName, { color: C.gold }]}>🕌 Islamic Guide</Text>
-            <Text style={[styles.aboutVersion, { color: C.textMuted }]}>Version 2.1.0 · Production Build</Text>
-            <Text style={[styles.aboutDesc, { color: C.textSecondary }]}>
-              Complete Quran with word-by-word translation, 9 authentic Hadith collections, comprehensive Duas library, AI Islamic Guide powered by Gemini 3, GPS prayer times, Qibla compass, 99 Names of Allah, Ramadan companion, Hajj guide, and more.
-            </Text>
+            <Text style={[styles.aboutName, { color: C.gold }]}>🕌 {APP_NAME}</Text>
+            <Text style={[styles.aboutVersion, { color: C.textMuted }]}>Version {APP_VERSION}</Text>
+            <Text style={[styles.aboutDesc, { color: C.textSecondary }]}>{APP_DESCRIPTION}</Text>
           </View>
           <Divider />
           <Pressable
             style={styles.optionRow}
-            onPress={() => {
-              /* Clear cache */
-              Alert.alert('Cache Cleared', 'App cache has been cleared successfully.');
-            }}
+            onPress={() => router.push('/onboarding' as any)}
+          >
+            <View style={styles.optionContent}>
+              <View style={[styles.rowIcon, { backgroundColor: `${C.info}15` }]}>
+                <MaterialIcons name="slideshow" size={18} color={C.info} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.optionName, { color: C.textPrimary }]}>Replay Welcome Tour</Text>
+                <Text style={[styles.optionSub, { color: C.textMuted }]}>See the app introduction again</Text>
+              </View>
+            </View>
+            <MaterialIcons name="chevron-right" size={20} color={C.textMuted} />
+          </Pressable>
+          <Divider />
+          <Pressable
+            style={styles.optionRow}
+            onPress={handleClearCache}
+            disabled={clearingCache}
           >
             <View style={styles.optionContent}>
               <View style={[styles.rowIcon, { backgroundColor: `${C.warning}15` }]}>
                 <MaterialIcons name="cleaning-services" size={18} color={C.warning} />
               </View>
-              <Text style={[styles.optionName, { color: C.textPrimary }]}>Clear Cache</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.optionName, { color: C.textPrimary }]}>Clear Cache</Text>
+                <Text style={[styles.optionSub, { color: C.textMuted }]}>
+                  {clearingCache ? 'Clearing…' : 'Removes downloaded Quran, Hadith & Tafsir pages'}
+                </Text>
+              </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={C.textMuted} />
           </Pressable>

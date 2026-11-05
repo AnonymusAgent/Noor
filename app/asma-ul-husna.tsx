@@ -24,11 +24,12 @@ const CATEGORY_COLOR_KEYS: Record<string, keyof ThemeColors> = {
 export default function AsmaUlHusnaScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors: C } = useApp();
+  // Favourites live in the context store, so they survive a restart and can be
+  // surfaced elsewhere (e.g. the library screen).
+  const { colors: C, asmaFavorites: favorites, toggleAsmaFavorite } = useApp();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
   const [selectedName, setSelectedName] = useState<AsmaName | null>(null);
-  const [favorites, setFavorites] = useState<number[]>([]);
 
   const filtered = ASMA_UL_HUSNA.filter(n => {
     const matchCat = activeCategory === 'all' || n.category === activeCategory;
@@ -38,9 +39,7 @@ export default function AsmaUlHusnaScreen() {
     return matchCat && matchSearch;
   });
 
-  const toggleFav = (num: number) => {
-    setFavorites(prev => prev.includes(num) ? prev.filter(n => n !== num) : [...prev, num]);
-  };
+  const toggleFav = useCallback((num: number) => toggleAsmaFavorite(num), [toggleAsmaFavorite]);
 
 
   const getCategoryColor = useCallback((cat: string) => {
@@ -69,14 +68,16 @@ export default function AsmaUlHusnaScreen() {
         />
       </Pressable>
     </Pressable>
-  ), [C, favorites, getCategoryColor]);
+  ), [C, favorites, getCategoryColor, toggleFav]);
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       {/* Header */}
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={styles.headerCenter}>
