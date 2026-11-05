@@ -263,16 +263,87 @@ export function getAyahAudioUrl(
   return `https://cdn.islamic.network/quran/audio/128/${reciterId}/${verseNumber}.mp3`;
 }
 
+/** A single word of an ayah, normalised for rendering. */
+export interface WordByWordEntry {
+  /** Position of the word within the ayah (1-based). */
+  position: number;
+  /** Arabic text (Uthmani script when available). */
+  arabic: string;
+  /** Latin transliteration, empty when the API has none for this word. */
+  transliteration: string;
+  /** English gloss of the word, empty when unavailable. */
+  translation: string;
+  /** True for pause/end-of-ayah markers, which are not real words. */
+  isAyahMarker: boolean;
+}
+
+/**
+ * Quran.com (QDC) returns `translation` and `transliteration` as *objects*
+ * (`{ text, language_name }`), not strings. Rendering that object directly
+ * throws "Objects are not valid as a React child" and takes the whole reader
+ * down — which is exactly what happened when word-by-word was enabled.
+ *
+ * This normaliser is deliberately tolerant: it accepts a plain string, the
+ * `{ text }` wrapper, or a missing value, so a future API change degrades to a
+ * blank gloss instead of a crash.
+ */
+function readLocalisedText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const text = (value as { text?: unknown }).text;
+    if (typeof text === 'string') return text;
+  }
+  return '';
+}
+
+function normalizeWord(raw: unknown, index: number): WordByWordEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const word = raw as Record<string, unknown>;
+
+  const arabic =
+    (typeof word.text_uthmani === 'string' && word.text_uthmani) ||
+    (typeof word.text === 'string' && word.text) ||
+    readLocalisedText(word.text_arab);
+  if (!arabic) return null;
+
+  const isAyahMarker =
+    word.char_type_name === 'end' ||
+    word.charTypeId === 4 ||
+    word.char_type_name === 'pause';
+
+  return {
+    position: typeof word.position === 'number' ? word.position : index + 1,
+    arabic,
+    transliteration: readLocalisedText(word.transliteration) || readLocalisedText(word.text_transliteration),
+    translation: readLocalisedText(word.translation) || readLocalisedText(word.text_translation),
+    isAyahMarker,
+  };
+}
+
+/**
+ * Fetches the word-by-word breakdown of one ayah.
+ *
+ * Returns an empty array when the API is unreachable or the response is
+ * malformed; it never throws, so callers can treat `[]` as "unavailable".
+ */
 export async function fetchWordByWord(
   surahNumber: number,
   ayahNumber: number
-): Promise<any[]> {
+): Promise<WordByWordEntry[]> {
+  const url =
+    `https://api.qurancdn.com/api/qdc/verses/by_key/${surahNumber}:${ayahNumber}` +
+    '?words=true&word_fields=text_uthmani,text_transliteration,translation&translation_fields=text';
+
   try {
-    const response = await fetchWithTimeout(
-      `https://api.qurancdn.com/api/qdc/verses/by_key/${surahNumber}:${ayahNumber}?words=true&word_fields=text_uthmani,text_transliteration,translation`
-    );
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) return [];
     const data = await response.json();
-    return data.verse?.words || [];
+    const words = data?.verse?.words;
+    if (!Array.isArray(words)) return [];
+
+    return words
+      .map((word: unknown, index: number) => normalizeWord(word, index))
+      .filter((word: WordByWordEntry | null): word is WordByWordEntry => word !== null);
   } catch {
     return [];
   }
