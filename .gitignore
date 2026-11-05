@@ -33,6 +33,11 @@ yarn-error.*
 # local env files
 .env
 .env*.local
+server/.env
+
+# server build output and the development-only in-process database
+server/dist/
+server/.pglite/
 
 # typescript
 *.tsbuildinfo

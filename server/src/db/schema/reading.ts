@@ -1,5 +1,5 @@
 import { pgTable, text, integer, timestamp, uuid, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core';
-import { users } from './users';
+import { users } from './users.ts';
 
 export const readingProgress = pgTable('reading_progress', {
   id: uuid('id').primaryKey().defaultRandom(),

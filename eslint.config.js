@@ -12,6 +12,11 @@ module.exports = defineConfig([
       // Expo generates these on every `expo start` / `expo export`.
       '.expo/*',
       'expo-env.d.ts',
+      // The sync API is a plain Node package with its own config
+      // (`server/eslint.config.mjs`) and its own `pnpm lint:server` script.
+      // Expo's rules (no dynamic process.env access, React Native patterns) do
+      // not apply to a server that is configured through the environment.
+      'server/**',
     ],
   },
   {

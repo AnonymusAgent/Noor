@@ -2,6 +2,7 @@ import React, {
   createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { markLocalChange } from '../services/syncEngine';
 import { Appearance, ColorSchemeName } from 'react-native';
 import { getColors, getHighContrastColors, ThemeColors } from '../constants/theme';
 import { isWithinDarkWindow, toDateKey } from '../lib/date';
@@ -134,6 +135,11 @@ interface AppContextType {
   completeOnboarding: () => Promise<void>;
   /** True once stored settings have been read (screens can wait on this). */
   hydrated: boolean;
+  /**
+   * Re-reads everything from storage. Cloud sync calls this after downloading
+   * remote data so the UI reflects it without restarting the app.
+   */
+  reloadFromStorage: () => Promise<void>;
 
   // Bookmarks
   bookmarks: Bookmark[];
@@ -301,12 +307,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, [settings.darkModeSchedule.enabled]);
 
-  // Load all persisted data on mount
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const keys = [
         'app_settings_v2', 'bookmarks', 'notes', 'last_read',
@@ -343,7 +344,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (map['salah_records']) setSalahRecords(JSON.parse(map['salah_records']));
     } catch { /* use defaults */ }
     setHydrated(true);
-  };
+  }, []);
+
+  // Load all persisted data on mount
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Settings are read through a ref so `updateSettings` keeps a stable identity
   // and, more importantly, so two updates dispatched in the same tick merge
@@ -359,6 +365,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!hydrated) return;
     try {
       await AsyncStorage.setItem(key, JSON.stringify(value));
+      // Tells the cloud layer that this device holds changes the server has not
+      // seen yet. A no-op when cloud sync is not configured.
+      void markLocalChange();
     } catch { /* storage full / unavailable — keep the in-memory value */ }
   }, [hydrated]);
 
@@ -367,6 +376,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     settingsRef.current = newSettings;
     setSettings(newSettings);
     await AsyncStorage.setItem('app_settings_v2', JSON.stringify(newSettings));
+    void markLocalChange();
   }, []);
 
   const completeOnboarding = useCallback(async () => {
@@ -609,6 +619,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateSettings,
       completeOnboarding,
       hydrated,
+      reloadFromStorage: loadData,
       bookmarks,
       addBookmark,
       removeBookmark,
