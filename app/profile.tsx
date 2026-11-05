@@ -2,9 +2,10 @@
  * Profile Screen — Shows local account status and data summary.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Dimensions,
+  View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Alert, Share,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -13,6 +14,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { SURAH_LIST } from '../constants/quranData';
+import { APP_VERSION } from '../constants/appInfo';
+import {
+  createBackup, parseBackup, restoreBackup, writeBackupFile, BackupDocument,
+} from '../services/backupService';
 
 const { width: Dimensions_width } = Dimensions.get('window');
 
@@ -20,6 +25,81 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: C, settings, bookmarks, notes, fastingDays, aiConversations } = useApp();
+  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+  const [pendingBackup, setPendingBackup] = useState<BackupDocument | null>(null);
+
+  const handleExport = async () => {
+    if (busy) return;
+    setBusy('export');
+    try {
+      const { doc, summary } = await createBackup(APP_VERSION);
+      if (summary.keyCount === 0) {
+        Alert.alert('Nothing to back up yet', 'Your bookmarks, notes and progress are empty.');
+        return;
+      }
+      const fileUri = await writeBackupFile(doc);
+      await Share.share({
+        message: `IslamicGuide backup (${summary.keyCount} sections) saved to: ${fileUri}`,
+        url: fileUri,
+        title: 'IslamicGuide backup',
+      });
+    } catch {
+      Alert.alert('Backup failed', 'Could not create the backup file. Please try again.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Restore reads the pasted/provided JSON. Without a file picker dependency we
+   * accept the backup text itself, which is exactly what the export produces
+   * and what a user can copy from their notes app or desktop.
+   */
+  const handleImportPrompt = () => {
+    Alert.prompt?.(
+      'Restore from backup',
+      'Paste the contents of your IslamicGuide backup file.',
+      async (text?: string) => {
+        if (!text) return;
+        try {
+          const doc = parseBackup(text);
+          setPendingBackup(doc);
+          Alert.alert(
+            'Replace local data?',
+            `This backup contains ${Object.keys(doc.data).length} sections from ${new Date(doc.createdAt).toLocaleDateString()}. Your current bookmarks, notes and progress will be overwritten.`,
+            [
+              { text: 'Cancel', style: 'cancel', onPress: () => setPendingBackup(null) },
+              {
+                text: 'Restore',
+                style: 'destructive',
+                onPress: async () => {
+                  setBusy('import');
+                  try {
+                    const count = await restoreBackup(doc);
+                    Alert.alert('Restored', `${count} sections restored. Reopen the app to see them.`);
+                  } catch {
+                    Alert.alert('Restore failed', 'The backup could not be applied.');
+                  } finally {
+                    setBusy(null);
+                    setPendingBackup(null);
+                  }
+                },
+              },
+            ],
+          );
+        } catch (error) {
+          Alert.alert(
+            'Invalid backup',
+            error instanceof Error ? error.message : 'That text is not a valid backup.',
+          );
+        }
+      },
+      'plain-text',
+    ) ?? Alert.alert(
+      'Restore not available',
+      'Paste-based restore is only available on iOS. On this device, keep your exported backup file and contact support.',
+    );
+  };
 
   const readingProgress = settings.readingProgress;
   const progressEntries = Object.entries(readingProgress);
@@ -60,7 +140,9 @@ export default function ProfileScreen() {
       {/* Header */}
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <Text style={[styles.headerTitle, { color: C.textPrimary }]}>Profile</Text>
@@ -202,8 +284,32 @@ export default function ProfileScreen() {
             <View style={[styles.syncFooter, { borderTopColor: C.cardBorder }]}>
               <MaterialIcons name="info-outline" size={13} color={C.textMuted} />
               <Text style={[styles.syncFooterText, { color: C.textMuted }]}>
-                Secure account sync is not configured for this app.
+                Account sync is not configured. Until it is, back up manually below — the file
+                contains everything listed above.
               </Text>
+            </View>
+
+            <View style={styles.backupRow}>
+              <Pressable
+                style={[styles.backupBtn, { backgroundColor: `${C.gold}15`, borderColor: `${C.gold}40` }]}
+                onPress={handleExport}
+                disabled={busy !== null}
+              >
+                {busy === 'export'
+                  ? <ActivityIndicator size="small" color={C.gold} />
+                  : <MaterialIcons name="download" size={16} color={C.gold} />}
+                <Text style={[styles.backupBtnText, { color: C.gold }]}>Export backup</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.backupBtn, { backgroundColor: `${C.info}15`, borderColor: `${C.info}40` }]}
+                onPress={handleImportPrompt}
+                disabled={busy !== null || pendingBackup !== null}
+              >
+                {busy === 'import'
+                  ? <ActivityIndicator size="small" color={C.info} />
+                  : <MaterialIcons name="upload" size={16} color={C.info} />}
+                <Text style={[styles.backupBtnText, { color: C.info }]}>Restore</Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -246,6 +352,18 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 20, fontWeight: '700' },
 
+  backupRow: { flexDirection: 'row', gap: 10, padding: Spacing.md },
+  backupBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  backupBtnText: { fontSize: 12, fontWeight: '700' },
   avatarSection: { alignItems: 'center', gap: 8 },
   avatar: {
     width: 80, height: 80, borderRadius: 40,

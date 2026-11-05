@@ -5,6 +5,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spacing, Radius } from '../../constants/theme';
 import { useApp } from '../../contexts/AppContext';
+import { APP_NAME, APP_VERSION, APP_TAGLINE } from '../../constants/appInfo';
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -40,6 +41,9 @@ export default function MoreScreen() {
     {
       title: 'Tools & Tracking',
       items: [
+        { id: 'zakat', title: 'Zakat Calculator', subtitle: 'Work out 2.5% of your zakatable wealth', icon: 'calculate', color: '#1B5E4A', route: '/zakat-calculator' },
+        { id: 'monthly-times', title: 'Monthly Prayer Times', subtitle: 'Full timetables for any month', icon: 'calendar-view-month', color: '#1B5E4A', route: '/prayer-times-monthly' },
+        { id: 'fav-duas', title: 'Favorite Duas', subtitle: 'Your saved supplications', icon: 'favorite', color: '#6B2D4A', route: '/favorite-duas' },
         { id: 'qibla', title: 'Qibla Compass', subtitle: 'Find the direction of Makkah', icon: 'explore', color: '#4A6B2D', route: '/qibla' },
         { id: 'tasbeeh', title: 'Digital Tasbeeh', subtitle: 'Counter with daily history', icon: 'loop', color: '#6B4A2D', route: '/tasbeeh' },
         { id: 'stats', title: 'Reading Statistics', subtitle: 'Quran progress, achievements & streaks', icon: 'bar-chart', color: '#2D6B4A', route: '/reading-stats' },
@@ -113,8 +117,8 @@ export default function MoreScreen() {
 
         {/* App Info */}
         <View style={[styles.appInfo, { margin: Spacing.md, marginTop: Spacing.xl, backgroundColor: `${C.primary}20`, borderRadius: Radius.lg, borderWidth: 1, borderColor: `${C.gold}20` }]}>
-          <Text style={[styles.appName, { color: C.gold }]}>🕌 Islamic Guide</Text>
-          <Text style={[styles.appVersion, { color: C.textMuted }]}>v2.0.0 · Quran & Hadith companion</Text>
+          <Text style={[styles.appName, { color: C.gold }]}>🕌 {APP_NAME}</Text>
+          <Text style={[styles.appVersion, { color: C.textMuted }]}>v{APP_VERSION} · {APP_TAGLINE}</Text>
           <Text style={[styles.appDesc, { color: C.textSecondary }]}>
             Complete Quran with word-by-word, authentic Hadith, Duas, AI Guide, 99 Names, Islamic Names, Ramadan Companion, Hajj Guide, Prayer Times, Qibla, Tasbeeh & more.
           </Text>

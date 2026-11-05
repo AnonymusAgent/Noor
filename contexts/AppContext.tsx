@@ -120,6 +120,8 @@ export interface AppSettings {
   hapticFeedback: boolean;
   highContrastMode: boolean;
   textScaling: number; // 0.8 – 1.4
+  /** Set once the first-run welcome has been completed or skipped. */
+  hasCompletedOnboarding: boolean;
 }
 
 // ─── Context Interface ─────────────────────────────────────────────────────────
@@ -128,6 +130,10 @@ interface AppContextType {
   colors: ThemeColors;
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
+  /** Persisted flag driving the first-run welcome screen. */
+  completeOnboarding: () => Promise<void>;
+  /** True once stored settings have been read (screens can wait on this). */
+  hydrated: boolean;
 
   // Bookmarks
   bookmarks: Bookmark[];
@@ -237,6 +243,7 @@ const defaultSettings: AppSettings = {
   hapticFeedback: true,
   highContrastMode: false,
   textScaling: 1.0,
+  hasCompletedOnboarding: false,
 };
 
 // ─── Context & Provider ────────────────────────────────────────────────────────
@@ -261,6 +268,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [salahRecords, setSalahRecords] = useState<SalahRecord[]>([]);
   const [systemColorScheme, setSystemColorScheme] = useState<ColorSchemeName>(Appearance.getColorScheme());
   const [now, setNow] = useState(() => new Date());
+  // Every mutator below persists the whole collection it touches. Before the
+  // AsyncStorage read resolves (which is async, and slow on cold start), that
+  // collection is still `[]` — so any early write would erase the user's data.
+  const [hydrated, setHydrated] = useState(false);
 
   // Resolve effective theme. A manual theme choice still loses to the
   // auto dark-mode schedule while its window is active.
@@ -331,6 +342,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (map['highlights']) setHighlights(JSON.parse(map['highlights']));
       if (map['salah_records']) setSalahRecords(JSON.parse(map['salah_records']));
     } catch { /* use defaults */ }
+    setHydrated(true);
   };
 
   // Settings are read through a ref so `updateSettings` keeps a stable identity
@@ -339,6 +351,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const settingsRef = useRef<AppSettings>(defaultSettings);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
+  /**
+   * Persists a collection only after the initial load has finished, so a fast
+   * tap during startup can never overwrite stored data with an empty list.
+   */
+  const persist = useCallback(async (key: string, value: unknown) => {
+    if (!hydrated) return;
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify(value));
+    } catch { /* storage full / unavailable — keep the in-memory value */ }
+  }, [hydrated]);
+
   const updateSettings = useCallback(async (updates: Partial<AppSettings>) => {
     const newSettings = { ...settingsRef.current, ...updates };
     settingsRef.current = newSettings;
@@ -346,20 +369,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.setItem('app_settings_v2', JSON.stringify(newSettings));
   }, []);
 
+  const completeOnboarding = useCallback(async () => {
+    await updateSettings({ hasCompletedOnboarding: true });
+  }, [updateSettings]);
+
   // ── Bookmarks ────────────────────────────────────────────────────────────────
 
   const addBookmark = useCallback(async (bookmark: Omit<Bookmark, 'id' | 'timestamp'>) => {
     const newBookmark: Bookmark = { ...bookmark, id: `bm_${Date.now()}`, timestamp: Date.now() };
     const updated = [newBookmark, ...bookmarks];
     setBookmarks(updated);
-    await AsyncStorage.setItem('bookmarks', JSON.stringify(updated));
-  }, [bookmarks]);
+    await persist('bookmarks', updated);
+  }, [bookmarks, persist]);
 
   const removeBookmark = useCallback(async (id: string) => {
     const updated = bookmarks.filter(b => b.id !== id && b.reference !== id);
     setBookmarks(updated);
-    await AsyncStorage.setItem('bookmarks', JSON.stringify(updated));
-  }, [bookmarks]);
+    await persist('bookmarks', updated);
+  }, [bookmarks, persist]);
 
   const isBookmarked = useCallback((reference: string) =>
     bookmarks.some(b => b.reference === reference), [bookmarks]);
@@ -370,14 +397,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newNote: Note = { ...note, id: `note_${Date.now()}`, timestamp: Date.now() };
     const updated = [newNote, ...notes];
     setNotes(updated);
-    await AsyncStorage.setItem('notes', JSON.stringify(updated));
-  }, [notes]);
+    await persist('notes', updated);
+  }, [notes, persist]);
 
   const removeNote = useCallback(async (id: string) => {
     const updated = notes.filter(n => n.id !== id);
     setNotes(updated);
-    await AsyncStorage.setItem('notes', JSON.stringify(updated));
-  }, [notes]);
+    await persist('notes', updated);
+  }, [notes, persist]);
 
   // ── Reading ──────────────────────────────────────────────────────────────────
 
@@ -409,9 +436,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return toPersist;
     });
     if (toPersist.length > 0) {
-      await AsyncStorage.setItem('tasbeeh_history', JSON.stringify(toPersist));
+      await persist('tasbeeh_history', toPersist);
     }
-  }, []);
+  }, [persist]);
 
   // ── Duas ─────────────────────────────────────────────────────────────────────
 
@@ -420,8 +447,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ? favoritedDuas.filter(id => id !== duaId)
       : [...favoritedDuas, duaId];
     setFavoritedDuas(updated);
-    await AsyncStorage.setItem('favorite_duas', JSON.stringify(updated));
-  }, [favoritedDuas]);
+    await persist('favorite_duas', updated);
+  }, [favoritedDuas, persist]);
 
   // ── AI Chat ──────────────────────────────────────────────────────────────────
 
@@ -429,7 +456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newMsg: AIMessage = { ...msg, id: `ai_${Date.now()}_${Math.random().toString(36).slice(2)}`, timestamp: Date.now() };
     const updated = [...aiMessages, newMsg].slice(-200);
     setAIMessages(updated);
-    await AsyncStorage.setItem('ai_messages', JSON.stringify(updated));
+    await persist('ai_messages', updated);
 
     // Mirror the message into its conversation so switching chats (or
     // reloading the app) does not show an empty history.
@@ -440,9 +467,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : c
       );
       setAIConversations(convs);
-      await AsyncStorage.setItem('ai_conversations', JSON.stringify(convs));
+      await persist('ai_conversations', convs);
     }
-  }, [aiMessages, activeConversationId, aiConversations]);
+  }, [aiMessages, activeConversationId, aiConversations, persist]);
 
   const clearAIChat = useCallback(async () => {
     setAIMessages([]);
@@ -452,9 +479,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         c.id === activeConversationId ? { ...c, messages: [], updatedAt: Date.now() } : c
       );
       setAIConversations(convs);
-      await AsyncStorage.setItem('ai_conversations', JSON.stringify(convs));
+      await persist('ai_conversations', convs);
     }
-  }, [activeConversationId, aiConversations]);
+  }, [activeConversationId, aiConversations, persist]);
 
   const createConversation = useCallback((title?: string): string => {
     const id = `conv_${Date.now()}`;
@@ -476,21 +503,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateConversationTitle = useCallback(async (id: string, title: string) => {
     const updated = aiConversations.map(c => c.id === id ? { ...c, title } : c);
     setAIConversations(updated);
-    await AsyncStorage.setItem('ai_conversations', JSON.stringify(updated));
-  }, [aiConversations]);
+    await persist('ai_conversations', updated);
+  }, [aiConversations, persist]);
 
   const deleteConversation = useCallback(async (id: string) => {
     const updated = aiConversations.filter(c => c.id !== id);
     setAIConversations(updated);
     if (activeConversationId === id) setActiveConversationId(updated[0]?.id || null);
-    await AsyncStorage.setItem('ai_conversations', JSON.stringify(updated));
-  }, [aiConversations, activeConversationId]);
+    await persist('ai_conversations', updated);
+  }, [aiConversations, activeConversationId, persist]);
 
   const pinConversation = useCallback(async (id: string) => {
     const updated = aiConversations.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c);
     setAIConversations(updated);
-    await AsyncStorage.setItem('ai_conversations', JSON.stringify(updated));
-  }, [aiConversations]);
+    await persist('ai_conversations', updated);
+  }, [aiConversations, persist]);
 
   // ── Fasting ──────────────────────────────────────────────────────────────────
 
@@ -500,8 +527,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ? fastingDays.map(d => d.date === date ? { ...d, fasted: !d.fasted } : d)
       : [...fastingDays, { date, fasted: true }];
     setFastingDays(updated);
-    await AsyncStorage.setItem('fasting_days', JSON.stringify(updated));
-  }, [fastingDays]);
+    await persist('fasting_days', updated);
+  }, [fastingDays, persist]);
 
   // ── Asma / Names Favorites ────────────────────────────────────────────────────
 
@@ -510,16 +537,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ? asmaFavorites.filter(n => n !== num)
       : [...asmaFavorites, num];
     setAsmaFavorites(updated);
-    await AsyncStorage.setItem('asma_favorites', JSON.stringify(updated));
-  }, [asmaFavorites]);
+    await persist('asma_favorites', updated);
+  }, [asmaFavorites, persist]);
 
   const toggleNameFavorite = useCallback(async (id: string) => {
     const updated = nameFavorites.includes(id)
       ? nameFavorites.filter(n => n !== id)
       : [...nameFavorites, id];
     setNameFavorites(updated);
-    await AsyncStorage.setItem('name_favorites', JSON.stringify(updated));
-  }, [nameFavorites]);
+    await persist('name_favorites', updated);
+  }, [nameFavorites, persist]);
 
   // ── Highlights ────────────────────────────────────────────────────────────────
 
@@ -528,14 +555,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newH: Highlight = { ...h, id: `hl_${Date.now()}`, timestamp: Date.now() };
     const updated = [newH, ...filtered];
     setHighlights(updated);
-    await AsyncStorage.setItem('highlights', JSON.stringify(updated));
-  }, [highlights]);
+    await persist('highlights', updated);
+  }, [highlights, persist]);
 
   const removeHighlight = useCallback(async (surahNumber: number, ayahNumber: number) => {
     const updated = highlights.filter(h => !(h.surahNumber === surahNumber && h.ayahNumber === ayahNumber));
     setHighlights(updated);
-    await AsyncStorage.setItem('highlights', JSON.stringify(updated));
-  }, [highlights]);
+    await persist('highlights', updated);
+  }, [highlights, persist]);
 
   const getHighlight = useCallback((surahNumber: number, ayahNumber: number): Highlight | undefined => {
     return highlights.find(h => h.surahNumber === surahNumber && h.ayahNumber === ayahNumber);
@@ -560,8 +587,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updated = [...salahRecords, newRecord];
     }
     setSalahRecords(updated);
-    await AsyncStorage.setItem('salah_records', JSON.stringify(updated));
-  }, [salahRecords]);
+    await persist('salah_records', updated);
+  }, [salahRecords, persist]);
 
   const updateSalahJournal = useCallback(async (date: string, journal: string) => {
     const existing = salahRecords.find(r => r.date === date);
@@ -572,14 +599,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updated = [...salahRecords, { date, fajr: false, dhuhr: false, asr: false, maghrib: false, isha: false, journal }];
     }
     setSalahRecords(updated);
-    await AsyncStorage.setItem('salah_records', JSON.stringify(updated));
-  }, [salahRecords]);
+    await persist('salah_records', updated);
+  }, [salahRecords, persist]);
 
   return (
     <AppContext.Provider value={{
       colors,
       settings,
       updateSettings,
+      completeOnboarding,
+      hydrated,
       bookmarks,
       addBookmark,
       removeBookmark,

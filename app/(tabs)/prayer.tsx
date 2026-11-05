@@ -51,9 +51,17 @@ export default function PrayerScreen() {
         <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
           <View style={styles.headerTop}>
             <Text style={[styles.headerTitle, { color: C.textPrimary }]}>Prayer Times</Text>
-            <Pressable onPress={reload} style={[styles.refreshBtn, { backgroundColor: `${C.gold}20` }]}>
-              <MaterialIcons name="refresh" size={20} color={C.gold} />
-            </Pressable>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={() => router.push('/prayer-times-monthly' as any)}
+                style={[styles.refreshBtn, { backgroundColor: `${C.gold}20` }]}
+              >
+                <MaterialIcons name="calendar-month" size={20} color={C.gold} />
+              </Pressable>
+              <Pressable onPress={reload} style={[styles.refreshBtn, { backgroundColor: `${C.gold}20` }]}>
+                <MaterialIcons name="refresh" size={20} color={C.gold} />
+              </Pressable>
+            </View>
           </View>
           {locationName ? (
             <View style={styles.locationRow}>
@@ -155,6 +163,7 @@ const styles = StyleSheet.create({
   retryBtn: { paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.md },
   retryText: { fontWeight: '600' },
   header: { padding: Spacing.lg, paddingBottom: Spacing.xl },
+  headerActions: { flexDirection: 'row', gap: 8 },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '700' },
   refreshBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },

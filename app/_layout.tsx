@@ -1,5 +1,6 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect, useRef } from 'react';
 import { AppProvider, useApp } from '../contexts/AppContext';
@@ -10,9 +11,35 @@ import { preCacheTafsirBackground } from '../services/tafsirCacheService';
 import { schedulePrayerNotificationsWithGPS } from '../services/notificationService';
 import { preCacheAllCollections } from '../services/hadithService';
 
+// Hold the native splash until stored settings are known, otherwise the first
+// frame shows the dark theme and then flips for light-mode users.
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 function AppContent() {
-  const { settings } = useApp();
+  const { settings, hydrated } = useApp();
+  const router = useRouter();
+  const segments = useSegments();
   const didInitRef = useRef(false);
+
+  // Reveal the app once persisted settings have been applied.
+  useEffect(() => {
+    if (hydrated) SplashScreen.hideAsync().catch(() => {});
+  }, [hydrated]);
+
+  // Send first-run users to the welcome screen, and keep them out of it once
+  // they have finished. Doing it here (rather than in a screen) means it works
+  // no matter which deep link the app was opened with.
+  useEffect(() => {
+    if (!hydrated) return;
+    // `segments` is generated from the typed-route manifest, which lags behind
+    // a freshly added screen until the dev server regenerates it.
+    const inOnboarding = String(segments[0] ?? '') === 'onboarding';
+    if (!settings.hasCompletedOnboarding && !inOnboarding) {
+      router.replace('/onboarding' as any);
+    } else if (settings.hasCompletedOnboarding && inOnboarding) {
+      router.replace('/(tabs)');
+    }
+  }, [hydrated, settings.hasCompletedOnboarding, segments, router]);
 
   // Kick off background pre-caching, once per app launch.
   useEffect(() => {
@@ -77,6 +104,10 @@ function AppContent() {
         <Stack.Screen name="audio-manager" options={{ headerShown: false }} />
         <Stack.Screen name="tafsir/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="mosque-finder" options={{ headerShown: false }} />
+        <Stack.Screen name="prayer-times-monthly" options={{ headerShown: false }} />
+        <Stack.Screen name="favorite-duas" options={{ headerShown: false }} />
+        <Stack.Screen name="zakat-calculator" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="quran-comparison" options={{ headerShown: false }} />
         <Stack.Screen name="hifz" options={{ headerShown: false }} />
         <Stack.Screen name="quran-search" options={{ headerShown: false }} />

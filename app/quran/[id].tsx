@@ -87,7 +87,9 @@ interface WordData {
 }
 
 export default function SurahScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `ayah` is set when arriving from a bookmark, so the reader can jump
+  // straight to the saved verse instead of opening at verse 1.
+  const { id, ayah: ayahParam } = useLocalSearchParams<{ id: string; ayah?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const surahNum = parseInt(id || '1', 10);
@@ -122,7 +124,20 @@ export default function SurahScreen() {
       flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.2 });
     });
   }, [data]);
+
+  // Jump to the ayah requested by a deep link / bookmark once the verses exist.
+  useEffect(() => {
+    const target = pendingAyah.current;
+    if (!target || !data?.arabic?.ayahs?.length) return;
+    pendingAyah.current = null;
+    setSelectedAyah(target);
+    setCurrentAyah(target);
+    scrollToAyah(target);
+  }, [data, scrollToAyah]);
   const [selectedAyah, setSelectedAyah] = useState<number | null>(null);
+  const pendingAyah = useRef<number | null>(
+    ayahParam && Number(ayahParam) > 0 ? Number(ayahParam) : null,
+  );
   const [wordByWordData, setWordByWordData] = useState<Record<number, WordData[]>>({});
   const [loadingWBW, setLoadingWBW] = useState<number | null>(null);
 
@@ -394,7 +409,9 @@ export default function SurahScreen() {
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: C.background }]}>
       {/* Header */}
       <View style={[styles.navBar, { borderBottomColor: C.cardBorder }]}>
-        <Pressable onPress={() => router.back()} style={styles.navBtn}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.navBtn}>
           <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View style={styles.navCenter}>

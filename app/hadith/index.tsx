@@ -18,7 +18,9 @@ export default function HadithIndexScreen() {
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       <LinearGradient colors={[C.primaryDark, C.primary]} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
             <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
           </Pressable>
           <View style={{ flex: 1 }}>

@@ -68,7 +68,9 @@ export default function SearchScreen() {
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: C.cardBorder }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <View style={[styles.searchBar, { backgroundColor: C.card, borderColor: C.cardBorder }]}>

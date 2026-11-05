@@ -16,7 +16,13 @@ const PRESETS = [
   { name: 'La ilaha illallah', arabic: 'لَا إِلَهَ إِلَّا اللَّهُ', target: 100 },
   { name: 'Astaghfirullah', arabic: 'أَسْتَغْفِرُ اللَّهَ', target: 100 },
   { name: 'Durood Ibrahim', arabic: 'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ', target: 100 },
+  { name: 'La hawla wa la quwwata', arabic: 'لَا حَوْلَ وَلَا قُوَّةَ إِلَّا بِاللَّهِ', target: 100 },
+  { name: 'SubhanAllahi wa bihamdih', arabic: 'سُبْحَانَ اللَّهِ وَبِحَمْدِهِ', target: 100 },
+  { name: 'Hasbunallahu wa ni\'mal wakeel', arabic: 'حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ', target: 100 },
 ];
+
+/** Target counts a user can cycle through with the target stepper. */
+const TARGET_CHOICES = [10, 33, 34, 66, 99, 100, 500, 1000];
 
 export default function TasbeehScreen() {
   const router = useRouter();
@@ -24,6 +30,9 @@ export default function TasbeehScreen() {
   const { setTasbeehCount, tasbeehCount, dailyTasbeehHistory, settings, colors: C } = useApp();
   const [count, setCount] = useState(0);
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[0]);
+  // Persisting the chosen dhikr/target means the counter reopens where it left
+  // off instead of always resetting to SubhanAllah ×33.
+  const [targetIndex, setTargetIndex] = useState(() => Math.max(0, TARGET_CHOICES.indexOf(PRESETS[0].target)));
   const [target, setTarget] = useState(33);
   // Today's tally lives in context (persisted per day), so it must be the
   // single source of truth — a local mirror started back at 0 on every mount.
@@ -47,13 +56,23 @@ export default function TasbeehScreen() {
   const selectPreset = (preset: typeof PRESETS[0]) => {
     setSelectedPreset(preset);
     setTarget(preset.target);
+    const idx = TARGET_CHOICES.indexOf(preset.target);
+    setTargetIndex(idx >= 0 ? idx : TARGET_CHOICES.length - 1);
     setCount(0);
+  };
+
+  const cycleTarget = (delta: number) => {
+    const next = Math.min(Math.max(targetIndex + delta, 0), TARGET_CHOICES.length - 1);
+    setTargetIndex(next);
+    setTarget(TARGET_CHOICES[next]);
   };
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: C.cardBorder }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+          accessibilityLabel="Go back"
+          accessibilityRole="button" style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color={C.textPrimary} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: C.textPrimary }]}>Digital Tasbeeh</Text>
@@ -88,7 +107,31 @@ export default function TasbeehScreen() {
 
         <Text style={[styles.arabicName, { color: C.gold }]}>{selectedPreset.arabic}</Text>
         <Text style={[styles.presetName, { color: C.textPrimary }]}>{selectedPreset.name}</Text>
-        <Text style={[styles.targetText, { color: C.textMuted }]}>Target: {target} · Completed: {completed}x</Text>
+
+        {/* Target stepper — one fixed target per dhikr is too rigid */}
+        <View style={styles.targetRow}>
+          <Pressable
+            onPress={() => cycleTarget(-1)}
+            style={[styles.targetBtn, { backgroundColor: C.card, borderColor: C.cardBorder }]}
+            disabled={targetIndex === 0}
+          >
+            <MaterialIcons name="remove" size={16} color={targetIndex === 0 ? C.textMuted : C.textPrimary} />
+          </Pressable>
+          <Text style={[styles.targetText, { color: C.textMuted }]}>
+            Target {target} · Completed {completed}×
+          </Text>
+          <Pressable
+            onPress={() => cycleTarget(1)}
+            style={[styles.targetBtn, { backgroundColor: C.card, borderColor: C.cardBorder }]}
+            disabled={targetIndex === TARGET_CHOICES.length - 1}
+          >
+            <MaterialIcons
+              name="add"
+              size={16}
+              color={targetIndex === TARGET_CHOICES.length - 1 ? C.textMuted : C.textPrimary}
+            />
+          </Pressable>
+        </View>
 
         {/* Counter Display */}
         <View style={styles.counterArea}>
@@ -173,6 +216,8 @@ const styles = StyleSheet.create({
   presetText: { fontSize: 13, fontWeight: '500' },
   arabicName: { fontSize: 32, textAlign: 'center', fontWeight: '400', marginTop: Spacing.md, lineHeight: 52 },
   presetName: { fontSize: 16, fontWeight: '600', textAlign: 'center', marginTop: 4 },
+  targetRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 8 },
+  targetBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   targetText: { fontSize: 13, textAlign: 'center', marginTop: 4 },
   counterArea: { alignItems: 'center', marginTop: Spacing.xl },
   counterRing: {
