@@ -11,7 +11,7 @@ import { useSurah } from '../../hooks/useQuran';
 import { useApp } from '../../contexts/AppContext';
 import { useAudioPlayer } from '../../contexts/AudioPlayerContext';
 import { SURAH_LIST, RECITERS, TRANSLATIONS } from '../../constants/quranData';
-import { fetchWordByWord } from '../../services/quranService';
+import { fetchWordByWord, WordByWordEntry } from '../../services/quranService';
 
 const TOGGLE_OPTIONS: { key: 'showTranslation' | 'showTransliteration' | 'showWordByWord'; label: string }[] = [
   { key: 'showTranslation', label: 'Show Translation' },
@@ -77,15 +77,6 @@ function segmentTajweed(text: string): TajweedSegment[] {
   return segments;
 }
 
-interface WordData {
-  id: number;
-  position: number;
-  text_uthmani: string;
-  transliteration?: string;
-  translation?: string;
-  charTypeId?: number;
-}
-
 export default function SurahScreen() {
   // `ayah` is set when arriving from a bookmark, so the reader can jump
   // straight to the saved verse instead of opening at verse 1.
@@ -138,8 +129,9 @@ export default function SurahScreen() {
   const pendingAyah = useRef<number | null>(
     ayahParam && Number(ayahParam) > 0 ? Number(ayahParam) : null,
   );
-  const [wordByWordData, setWordByWordData] = useState<Record<number, WordData[]>>({});
+  const [wordByWordData, setWordByWordData] = useState<Record<number, WordByWordEntry[]>>({});
   const [loadingWBW, setLoadingWBW] = useState<number | null>(null);
+  const [wbwError, setWbwError] = useState<string | null>(null);
 
   // Derived: is this surah playing via the global player?
   const isThisSurahPlaying = globalIsPlaying && nowPlaying?.surahNumber === surahNum;
@@ -170,10 +162,17 @@ export default function SurahScreen() {
   const loadWordByWord = useCallback(async (ayahNum: number) => {
     if (wordByWordData[ayahNum] || loadingWBW === ayahNum) return;
     setLoadingWBW(ayahNum);
+    setWbwError(null);
     try {
       const words = await fetchWordByWord(surahNum, ayahNum);
+      // Cache even an empty result so we do not hammer the API on every tap.
       setWordByWordData(prev => ({ ...prev, [ayahNum]: words }));
-    } catch { /* silent */ } finally {
+      if (words.length === 0) {
+        setWbwError('Word-by-word data is unavailable for this verse. Check your connection and tap to retry.');
+      }
+    } catch {
+      setWbwError('Could not load word-by-word. Tap to retry.');
+    } finally {
       setLoadingWBW(null);
     }
   }, [wordByWordData, loadingWBW, surahNum]);
@@ -279,17 +278,26 @@ export default function SurahScreen() {
         {showWBW && (
           <View style={styles.wbwContainer}>
             {loadingWBW === ayahNum ? (
-              <ActivityIndicator size="small" color={C.gold} />
+              <View style={styles.wbwLoading}>
+                <ActivityIndicator size="small" color={C.gold} />
+                <Text style={[styles.wbwLoadingText, { color: C.textMuted }]}>Loading words…</Text>
+              </View>
             ) : wbwData && wbwData.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={styles.wbwRow}>
-                  {wbwData.filter(w => w.charTypeId !== 4).map((word, wi) => (
-                    <View key={wi} style={[styles.wbwWord, { backgroundColor: `${C.primary}20`, borderColor: C.cardBorder }]}>
-                      <Text style={[styles.wbwArabic, { color: C.textArabic }]}>{word.text_uthmani}</Text>
-                      {word.transliteration && (
+                  {/* `arabic`, `transliteration` and `translation` are always
+                      strings here — the service normalises Quran.com's nested
+                      objects, which used to crash this screen. */}
+                  {wbwData.map((word, wi) => (
+                    <View
+                      key={`${ayahNum}-${word.position}-${wi}`}
+                      style={[styles.wbwWord, { backgroundColor: `${C.primary}20`, borderColor: C.cardBorder }]}
+                    >
+                      <Text style={[styles.wbwArabic, { color: C.textArabic }]}>{word.arabic}</Text>
+                      {!!word.transliteration && (
                         <Text style={[styles.wbwTranslit, { color: C.textMuted }]}>{word.transliteration}</Text>
                       )}
-                      {word.translation && (
+                      {!!word.translation && (
                         <Text style={[styles.wbwMeaning, { color: C.gold }]}>{word.translation}</Text>
                       )}
                     </View>
@@ -297,9 +305,26 @@ export default function SurahScreen() {
                 </View>
               </ScrollView>
             ) : (
-              <Pressable onPress={() => loadWordByWord(ayahNum)} style={[styles.wbwLoad, { borderColor: `${C.gold}30` }]}>
-                <Text style={[styles.wbwLoadText, { color: C.gold }]}>Load Word-by-Word</Text>
+              <Pressable
+                onPress={() => {
+                  // Clear the cached empty result so the retry actually refetches.
+                  setWordByWordData(prev => {
+                    const next = { ...prev };
+                    delete next[ayahNum];
+                    return next;
+                  });
+                  loadWordByWord(ayahNum);
+                }}
+                style={[styles.wbwLoad, { borderColor: `${C.gold}30` }]}
+              >
+                <MaterialIcons name="refresh" size={14} color={C.gold} />
+                <Text style={[styles.wbwLoadText, { color: C.gold }]}>
+                  {wbwError ? 'Retry word-by-word' : 'Load Word-by-Word'}
+                </Text>
               </Pressable>
+            )}
+            {!!wbwError && !(wbwData && wbwData.length > 0) && (
+              <Text style={[styles.wbwErrorText, { color: C.warning }]}>{wbwError}</Text>
             )}
           </View>
         )}
@@ -378,10 +403,10 @@ export default function SurahScreen() {
       </Pressable>
     );
   }, [
-    data, settings, selectedAyah, currentAyah, wordByWordData, loadingWBW, C,
+    data, settings, selectedAyah, currentAyah, wordByWordData, loadingWBW, wbwError, C,
     getHighlight, isBookmarked, updateReadingProgress, loadWordByWord, router,
     setLastRead, shareAyah, bookmarkAyah, surahNum, surahMeta?.transliteration,
-    totalAyahs, updateSettings,
+    totalAyahs, updateSettings, setWordByWordData,
   ]);
 
   if (loading) {
@@ -818,6 +843,9 @@ const styles = StyleSheet.create({
   wbwArabic: { fontSize: 18, textAlign: 'center' },
   wbwTranslit: { fontSize: 10, textAlign: 'center', marginTop: 2, fontStyle: 'italic' },
   wbwMeaning: { fontSize: 10, textAlign: 'center', marginTop: 2, fontWeight: '600' },
+  wbwLoading: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
+  wbwLoadingText: { fontSize: 12 },
+  wbwErrorText: { fontSize: 11, marginTop: 6, lineHeight: 15 },
   wbwLoad: {
     padding: 10,
     borderRadius: Radius.sm,
