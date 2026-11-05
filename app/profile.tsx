@@ -13,8 +13,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
+import { useSync } from '../contexts/SyncContext';
 import { SURAH_LIST } from '../constants/quranData';
 import { APP_VERSION } from '../constants/appInfo';
+import AccountPanel from '../components/AccountPanel';
 import {
   createBackup, parseBackup, restoreBackup, writeBackupFile, BackupDocument,
 } from '../services/backupService';
@@ -25,6 +27,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: C, settings, bookmarks, notes, fastingDays, aiConversations } = useApp();
+  const { account, configured: accountConfigured } = useSync();
   const [busy, setBusy] = useState<'export' | 'import' | null>(null);
   const [pendingBackup, setPendingBackup] = useState<BackupDocument | null>(null);
 
@@ -153,75 +156,20 @@ export default function ProfileScreen() {
           <View style={[styles.avatar, { backgroundColor: `${C.gold}20`, borderColor: `${C.gold}40` }]}>
             <MaterialIcons name="person" size={40} color={C.gold} />
           </View>
-          <Text style={[styles.guestName, { color: C.textPrimary }]}>Guest User</Text>
-          <Text style={[styles.guestSub, { color: C.textSecondary }]}>Using Islamic Guide locally</Text>
+          <Text style={[styles.guestName, { color: C.textPrimary }]}>
+            {account ? (account.user.name?.trim() || account.user.email) : 'Guest User'}
+          </Text>
+          <Text style={[styles.guestSub, { color: C.textSecondary }]}>
+            {account
+              ? (accountConfigured ? 'Synced across your devices' : 'Signed in')
+              : 'Using Islamic Guide locally'}
+          </Text>
         </View>
       </LinearGradient>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        {/* ── Connect Backend Banner ─────────────────────────────────────────── */}
-        <View style={[styles.connectBanner, { backgroundColor: `${C.gold}10`, borderColor: `${C.gold}30`, margin: Spacing.md }]}>
-          <View style={[styles.connectIconBox, { backgroundColor: `${C.gold}20` }]}>
-            <MaterialIcons name="cloud" size={28} color={C.gold} />
-          </View>
-          <View style={styles.connectInfo}>
-            <Text style={[styles.connectTitle, { color: C.textPrimary }]}>Enable Cloud Sync</Text>
-            <Text style={[styles.connectDesc, { color: C.textSecondary }]}>
-              Cloud sync is not configured. Bookmarks, notes, reading progress, and AI history stay on this device for now.
-            </Text>
-            <View style={styles.connectSteps}>
-              {[
-                'Configure a secure account API on your server',
-                'Enable authentication on that API',
-                'Connect this app through the server API',
-              ].map((step, i) => (
-                <View key={i} style={styles.connectStep}>
-                  <View style={[styles.stepNum, { backgroundColor: `${C.gold}20` }]}>
-                    <Text style={[styles.stepNumText, { color: C.gold }]}>{i + 1}</Text>
-                  </View>
-                  <Text style={[styles.stepText, { color: C.textSecondary }]}>{step}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
-
-        {/* ── Auth Status ────────────────────────────────────────────────────── */}
-        <View style={[styles.section, { paddingHorizontal: Spacing.md }]}>
-          <Text style={[styles.sectionTitle, { color: C.textPrimary }]}>Authentication</Text>
-          <View style={[styles.authCard, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
-            <View style={[styles.authStatus, { backgroundColor: `${C.warning}15`, borderColor: `${C.warning}30` }]}>
-              <MaterialIcons name="cloud-off" size={18} color={C.warning} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.authStatusTitle, { color: C.warning }]}>Not Connected</Text>
-                <Text style={[styles.authStatusSub, { color: C.textMuted }]}>
-                  Sign-in is unavailable until a secure account backend is configured.
-                </Text>
-              </View>
-            </View>
-
-            {/* Sign in form placeholder */}
-            <View style={styles.authFormPlaceholder}>
-              <View style={[styles.inputPlaceholder, { backgroundColor: C.background, borderColor: C.cardBorder }]}>
-                <MaterialIcons name="email" size={16} color={C.textMuted} />
-                <Text style={[styles.inputPlaceholderText, { color: C.textMuted }]}>Email address</Text>
-              </View>
-              <View style={[styles.inputPlaceholder, { backgroundColor: C.background, borderColor: C.cardBorder }]}>
-                <MaterialIcons name="lock" size={16} color={C.textMuted} />
-                <Text style={[styles.inputPlaceholderText, { color: C.textMuted }]}>Password</Text>
-              </View>
-              <View style={[styles.disabledBtn, { backgroundColor: C.cardBorder }]}>
-                <MaterialIcons name="lock" size={16} color={C.textMuted} />
-                <Text style={[styles.disabledBtnText, { color: C.textMuted }]}>
-                  Authentication Not Configured
-                </Text>
-              </View>
-              <Text style={[styles.authFormNote, { color: C.textMuted }]}>
-                Once connected: sign up · sign in · forgot password · email verification — all available here.
-              </Text>
-            </View>
-          </View>
-        </View>
+        {/* ── Cloud Sync / Account ───────────────────────────────────────────── */}
+        <AccountPanel />
 
         {/* ── Local Data Summary ─────────────────────────────────────────────── */}
         <View style={[styles.section, { paddingHorizontal: Spacing.md, marginTop: Spacing.lg }]}>
@@ -233,7 +181,7 @@ export default function ProfileScreen() {
             </View>
           </View>
           <Text style={[styles.sectionDesc, { color: C.textMuted }]}>
-            Your data is saved on this device. Cloud backup is not configured.
+            Your data is always saved on this device first — sign in above to also keep a copy in the cloud.
           </Text>
 
           <View style={[styles.dataList, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
@@ -371,27 +319,6 @@ const styles = StyleSheet.create({
   },
   guestName: { fontSize: 20, fontWeight: '700', marginTop: 4 },
   guestSub: { fontSize: 13 },
-
-  connectBanner: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 14,
-    borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.md,
-  },
-  connectIconBox: {
-    width: 52, height: 52, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  connectInfo: { flex: 1 },
-  connectTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
-  connectDesc: { fontSize: 13, lineHeight: 20, marginBottom: 12 },
-  connectSteps: { gap: 8 },
-  connectStep: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepNum: {
-    width: 22, height: 22, borderRadius: 11,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  stepNumText: { fontSize: 12, fontWeight: '700' },
-  stepText: { fontSize: 12, flex: 1, lineHeight: 18 },
-
   section: {},
   sectionHeaderRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -404,28 +331,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
   },
   localBadgeText: { fontSize: 11, fontWeight: '600' },
-
-  authCard: { borderRadius: Radius.lg, borderWidth: 1, overflow: 'hidden' },
-  authStatus: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    padding: 14, borderWidth: 0,
-    borderBottomWidth: 1,
-  },
-  authStatusTitle: { fontSize: 14, fontWeight: '700' },
-  authStatusSub: { fontSize: 12, marginTop: 2, lineHeight: 18 },
-  authFormPlaceholder: { padding: 14, gap: 10 },
-  inputPlaceholder: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderRadius: Radius.md, borderWidth: 1, padding: 12,
-  },
-  inputPlaceholderText: { fontSize: 14 },
-  disabledBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: 14, borderRadius: Radius.md,
-  },
-  disabledBtnText: { fontSize: 13, fontWeight: '600' },
-  authFormNote: { fontSize: 11, textAlign: 'center', lineHeight: 17 },
-
   dataList: { borderRadius: Radius.lg, borderWidth: 1, overflow: 'hidden' },
   dataRow: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: 12 },
   dataIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

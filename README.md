@@ -67,11 +67,48 @@ npx tsc --noEmit
 
 For a full list of dependencies, see [package.json](./package.json).
 
+## Cloud Sync (optional)
+
+The app is **local-first**: every feature works with no account and no network.
+Bookmarks, notes, highlights, reading progress, streaks and chat history are
+written to the device first and always remain readable offline.
+
+On top of that there is an optional backend in [`server/`](./server/README.md)
+that keeps a copy in the cloud so several devices agree:
+
+- **No passwords.** Sign in with a 6-digit code emailed to you (or, in
+  development, shown on screen).
+- **Nothing is uploaded until you sign in.** Without `EXPO_PUBLIC_API_URL` the
+  app never makes a network call for your data.
+- **Signing in merges, never wipes.** Existing local bookmarks and notes are
+  combined with what is already in the cloud.
+- **Offline is a normal state.** A failed sync shows "saved on this device, will
+  sync later" and retries the next time the app is opened.
+
+Enable it by starting the server and setting `EXPO_PUBLIC_API_URL`:
+
+```bash
+cp .env.example .env      # then set EXPO_PUBLIC_API_URL
+corepack pnpm server:dev  # starts server/ on :4000
+```
+
+See [`server/README.md`](./server/README.md) for the API, the sync protocol and
+deployment notes.
+
+### Manual export
+
+Prefer files to accounts? **Profile → Export backup** produces a portable JSON
+file and **Restore** brings that data back on another device. This works with or
+without cloud sync.
+
 ## Privacy
 
-Bookmarks, notes, highlights, reading progress, streaks and chat history are stored on the
-device only. Nothing is uploaded. Use **Profile → Export backup** to produce a portable JSON
-file, and **Restore** to bring that data back on another device.
+Your data stays on your device unless you turn on cloud sync. When sync is on,
+the server stores the collections you see in Profile (bookmarks, notes,
+highlights, progress, settings, activity and chat history) so your devices agree;
+it does not store anything else and never sees your reading as analytics. You can
+delete the account and all its data from the server at any time — local data is
+untouched. Use **Profile → Export backup** for a portable copy.
 
 ## Contributing
 

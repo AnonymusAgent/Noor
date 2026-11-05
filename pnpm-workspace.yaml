@@ -4,3 +4,7 @@ overrides:
 allowBuilds:
   esbuild: false
   unrs-resolver: false
+
+packages:
+  - '.'
+  - 'server'

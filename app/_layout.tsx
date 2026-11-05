@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect, useRef } from 'react';
 import { AppProvider, useApp } from '../contexts/AppContext';
 import { AudioPlayerProvider } from '../contexts/AudioPlayerContext';
+import { SyncProvider } from '../contexts/SyncContext';
 import FloatingPlayer from '../components/FloatingPlayer';
 import { initQuranOfflineCache } from '../services/quranService';
 import { preCacheTafsirBackground } from '../services/tafsirCacheService';
@@ -125,9 +126,11 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AppProvider>
-        <AudioPlayerProvider>
-          <AppContent />
-        </AudioPlayerProvider>
+        <SyncProvider>
+          <AudioPlayerProvider>
+            <AppContent />
+          </AudioPlayerProvider>
+        </SyncProvider>
       </AppProvider>
     </SafeAreaProvider>
   );

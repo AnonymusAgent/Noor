@@ -1,5 +1,5 @@
 import { pgTable, text, integer, timestamp, uuid, boolean, jsonb, primaryKey, index } from 'drizzle-orm/pg-core';
-import { users } from './users';
+import { users } from './users.ts';
 
 export const favoriteDuas = pgTable('favorite_duas', {
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
