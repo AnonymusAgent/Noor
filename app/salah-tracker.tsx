@@ -1,7 +1,6 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Modal, Alert, Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -9,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
+import { parseDateKey, toDateKey } from '../lib/date';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ const BADGES: BadgeDef[] = [
 function getDateStr(offset = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offset);
-  return d.toISOString().split('T')[0];
+  return toDateKey(d);
 }
 
 function getPastDays(n: number): string[] {
@@ -67,10 +67,14 @@ function calculateStreak(salahRecords: any[]): { current: number; longest: numbe
   let current = 0;
   let longest = 0;
 
-  // Current streak (from today backwards)
-  let d = new Date();
+  // Current streak (backwards from today). Today may still be incomplete, so
+  // start from yesterday when today is not yet a full-prayer day.
+  const d = new Date();
+  if (getPrayerCount(salahRecords.find(r => r.date === today)) !== 5) {
+    d.setDate(d.getDate() - 1);
+  }
   while (true) {
-    const ds = d.toISOString().split('T')[0];
+    const ds = toDateKey(d);
     const rec = salahRecords.find(r => r.date === ds);
     if (rec && getPrayerCount(rec) === 5) {
       current++;
@@ -88,9 +92,9 @@ function calculateStreak(salahRecords: any[]): { current: number; longest: numbe
   for (const rec of sorted) {
     if (getPrayerCount(rec) === 5) {
       if (prevDate) {
-        const prev = new Date(prevDate);
+        const prev = parseDateKey(prevDate);
         prev.setDate(prev.getDate() + 1);
-        const expectedNext = prev.toISOString().split('T')[0];
+        const expectedNext = toDateKey(prev);
         if (rec.date === expectedNext) {
           tempStreak++;
         } else {
@@ -112,8 +116,7 @@ function calculateStreak(salahRecords: any[]): { current: number; longest: numbe
 
 function getMonthlyStats(salahRecords: any[]) {
   const today = new Date();
-  const monthDays = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  const monthStr = today.toISOString().slice(0, 7); // YYYY-MM
+  const monthStr = toDateKey(today).slice(0, 7); // YYYY-MM
 
   const stats: Record<PrayerKey, { offered: number; total: number }> = {
     fajr: { offered: 0, total: 0 },
@@ -179,7 +182,10 @@ export default function SalahTrackerScreen() {
     return sum + salahRecords.filter(r => r[p.key]).length;
   }, 0);
 
-  const totalPossible = salahRecords.length * 5;
+  // Only days on which at least one prayer was logged can count towards the rate.
+  const trackedDays = salahRecords.filter(r => getPrayerCount(r) > 0).length;
+  const totalPossible = Math.max(trackedDays * 5, totalOffered);
+  const completionRate = totalPossible > 0 ? Math.round((totalOffered / totalPossible) * 100) : 0;
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>
@@ -286,7 +292,9 @@ export default function SalahTrackerScreen() {
               <Text style={styles.streakCardFire}>🕌</Text>
               <Text style={[styles.streakCardNum, { color: C.success }]}>{totalOffered}</Text>
               <Text style={[styles.streakCardLabel, { color: C.textMuted }]}>Total Prayers</Text>
-              <Text style={[styles.streakCardSub, { color: C.textMuted }]}>all time offered</Text>
+              <Text style={[styles.streakCardSub, { color: C.textMuted }]}>
+                {completionRate}% of logged days
+              </Text>
             </View>
           </View>
         </View>
@@ -404,7 +412,9 @@ export default function SalahTrackerScreen() {
 
         {/* ── Achievements ───────────────────────────────────────────────── */}
         <View style={[styles.section, { paddingHorizontal: Spacing.md, marginTop: Spacing.lg }]}>
-          <Text style={[styles.sectionTitle, { color: C.textMuted }]}>ACHIEVEMENTS</Text>
+          <Text style={[styles.sectionTitle, { color: C.textMuted }]}>
+            {`ACHIEVEMENTS · ${earnedBadges.length}/${BADGES.length} EARNED`}
+          </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
             {BADGES.map(badge => {
               const earned = longest >= badge.threshold;

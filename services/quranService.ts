@@ -4,6 +4,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SURAH_LIST } from '../constants/quranData';
 
 const ALQURAN_BASE = 'https://api.alquran.cloud/v1';
 const CACHE_VER = 'qv4';
@@ -240,13 +241,26 @@ export function getAudioUrl(
   return `https://download.quranicaudio.com/quran/${reciterIdentifier}/${surahStr}.mp3`;
 }
 
+/**
+ * The AlQuran Cloud CDN names ayah recitations by their verse index in the
+ * whole mushaf (1…6236), not by `S:S`, so the position has to be derived from
+ * the surah verse counts.
+ */
+export function getGlobalAyahNumber(surahNumber: number, ayahNumber: number): number {
+  let preceding = 0;
+  for (let i = 0; i < surahNumber - 1 && i < SURAH_LIST.length; i++) {
+    preceding += SURAH_LIST[i].versesCount;
+  }
+  return preceding + ayahNumber;
+}
+
 export function getAyahAudioUrl(
   surahNumber: number,
   ayahNumber: number,
   reciterId: string = 'ar.alafasy'
 ): string {
-  const verseKey = `${String(surahNumber).padStart(3, '0')}${String(ayahNumber).padStart(3, '0')}`;
-  return `https://verses.quran.com/${reciterId}/${verseKey}.mp3`;
+  const verseNumber = getGlobalAyahNumber(surahNumber, ayahNumber);
+  return `https://cdn.islamic.network/quran/audio/128/${reciterId}/${verseNumber}.mp3`;
 }
 
 export async function fetchWordByWord(

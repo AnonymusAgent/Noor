@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, Share, Alert, Modal, SectionList,
@@ -337,7 +337,6 @@ export default function NotesLibraryScreen() {
     </View>
   );
 
-  const showColorFilter = tab === 'highlights' || (tab === 'all' && colorFilter !== 'all');
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>

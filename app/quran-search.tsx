@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, FlatList, Pressable,
-  ActivityIndicator, ScrollView, Share, SectionList,
+  ActivityIndicator, ScrollView, Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -10,7 +10,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
-import { SURAH_LIST } from '../constants/quranData';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,11 +114,14 @@ export default function QuranSearchScreen() {
     });
   }, []);
 
-  const saveToHistory = async (q: string) => {
-    const updated = [q, ...recentSearches.filter(s => s !== q)].slice(0, 10);
-    setRecentSearches(updated);
-    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-  };
+  const saveToHistory = useCallback(async (q: string) => {
+    const next = (current: string[]) => {
+      const updated = [q, ...current.filter(s => s !== q)].slice(0, 10);
+      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(updated)).catch(() => {});
+      return updated;
+    };
+    setRecentSearches(next);
+  }, []);
 
   const clearHistory = async () => {
     setRecentSearches([]);
@@ -193,7 +195,7 @@ export default function QuranSearchScreen() {
     } finally {
       setLoading(false);
     }
-  }, [recentSearches]);
+  }, [saveToHistory]);
 
   const handleChange = (text: string) => {
     setQuery(text);

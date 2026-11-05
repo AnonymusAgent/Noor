@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spacing, Radius } from '../constants/theme';
 import { useQuranSearch } from '../hooks/useQuran';
 import { DUAS } from '../constants/duasData';
+import { getAllOfflineHadiths, OfflineHadith } from '../constants/offlineHadithDb';
 import { SAMPLE_HADITHS } from '../constants/hadithData';
 import { useApp } from '../contexts/AppContext';
 
@@ -21,12 +22,34 @@ export default function SearchScreen() {
   const [tab, setTab] = useState<SearchTab>('quran');
   const { results: quranResults, loading, search } = useQuranSearch();
 
+  // Search the full bundled hadith set, not just the handful of samples the
+  // home screen shows — otherwise most hadiths were unsearchable here.
   const hadithResults = query.length > 2
-    ? SAMPLE_HADITHS.filter(h =>
-        h.english.toLowerCase().includes(query.toLowerCase()) ||
-        (h.arabic && h.arabic.includes(query)) ||
-        h.narrator.toLowerCase().includes(query.toLowerCase())
-      )
+    ? (() => {
+        const q = query.toLowerCase();
+        const bundled: OfflineHadith[] = getAllOfflineHadiths();
+        const extras = SAMPLE_HADITHS.filter(
+          sample => !bundled.some(h => h.collection === sample.collection && h.number === sample.hadithNumber)
+        ).map<OfflineHadith>(sample => ({
+          id: `${sample.collection}_${sample.hadithNumber}`,
+          collection: sample.collection,
+          number: sample.hadithNumber,
+          bookName: sample.bookName,
+          chapterName: sample.chapterName ?? '',
+          arabic: sample.arabic ?? '',
+          english: sample.english,
+          narrator: sample.narrator,
+          grade: sample.grade ?? '',
+          reference: sample.reference ?? `${sample.bookName} ${sample.hadithNumber}`,
+        }));
+
+        return [...bundled, ...extras].filter(h =>
+          h.english.toLowerCase().includes(q) ||
+          h.arabic.includes(query) ||
+          h.narrator.toLowerCase().includes(q) ||
+          h.bookName.toLowerCase().includes(q)
+        );
+      })()
     : [];
 
   const duaResults = query.length > 2
@@ -109,11 +132,11 @@ export default function SearchScreen() {
               );
             }
             if (tab === 'hadith') {
-              const h = item as typeof SAMPLE_HADITHS[0];
+              const h = item as OfflineHadith;
               return (
                 <Pressable style={[styles.resultCard, { backgroundColor: C.card, borderColor: C.cardBorder }]} onPress={() => router.push(`/hadith/${h.collection}` as any)}>
                   <View style={[styles.resultBadge, { backgroundColor: `${C.info}20` }]}>
-                    <Text style={[styles.resultBadgeText, { color: C.info }]}>#{h.hadithNumber}</Text>
+                    <Text style={[styles.resultBadgeText, { color: C.info }]}>#{h.number}</Text>
                   </View>
                   <View style={styles.resultInfo}>
                     <Text style={[styles.resultText, { color: C.textSecondary }]} numberOfLines={3}>{h.english}</Text>

@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, Pressable,
-  TextInput, ScrollView,
+  View, Text, StyleSheet, FlatList, Pressable, TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';

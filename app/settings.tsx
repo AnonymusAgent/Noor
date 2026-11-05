@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
-import { useApp } from '../contexts/AppContext';
+import { useApp, NotificationSettings } from '../contexts/AppContext';
 import { TRANSLATIONS, RECITERS } from '../constants/quranData';
 import { CALCULATION_METHODS, MADHABS } from '../constants/prayerData';
 import {
@@ -34,7 +34,7 @@ export default function SettingsScreen() {
     updateSettings({
       darkModeSchedule: { ...settings.darkModeSchedule, ...updates },
     });
-  }, [settings.darkModeSchedule, updateSettings]);
+  }, [settings, updateSettings]);
 
   const openTimePicker = (which: 'start' | 'end') => {
     if (which === 'start') {
@@ -78,15 +78,26 @@ export default function SettingsScreen() {
     const updatedNotifs = { ...settings.notifications, [key]: value };
     await updateSettings({ notifications: updatedNotifs });
     await applyAllNotificationSettings(updatedNotifs);
-  }, [settings.notifications, notifPermission, updateSettings]);
+  }, [settings, notifPermission, updateSettings]);
 
   const handleCancelAll = async () => {
     await cancelAllNotifications();
-    const disabled = Object.fromEntries(
-      Object.keys(settings.notifications).map(k =>
-        [k, typeof settings.notifications[k as keyof typeof settings.notifications] === 'boolean' ? false : settings.notifications[k as keyof typeof settings.notifications]]
-      )
-    ) as typeof settings.notifications;
+    // Keep non-boolean options (e.g. reminderMinutesBefore) intact.
+    const disabled: NotificationSettings = {
+      ...settings.notifications,
+      fajrReminder: false,
+      dhuhrReminder: false,
+      asrReminder: false,
+      maghribReminder: false,
+      ishaReminder: false,
+      dailyAyah: false,
+      dailyHadith: false,
+      morningAzkar: false,
+      eveningAzkar: false,
+      fridayReminder: false,
+      tahajjudReminder: false,
+      fastingReminder: false,
+    };
     await updateSettings({ notifications: disabled });
     Alert.alert('Done', 'All notifications have been disabled.');
   };

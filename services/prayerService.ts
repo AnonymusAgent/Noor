@@ -1,6 +1,9 @@
 const ALADHAN_BASE = 'https://api.aladhan.com/v1';
 
 export interface PrayerTimes {
+  // AlAdhan returns a string per timing; the index signature keeps the object
+  // usable as a plain string map (e.g. in component state).
+  [key: string]: string;
   Fajr: string;
   Sunrise: string;
   Dhuhr: string;
@@ -12,6 +15,25 @@ export interface PrayerTimes {
   Midnight: string;
   Firstthird: string;
   Lastthird: string;
+}
+
+/**
+ * AlAdhan sometimes appends a timezone label, e.g. `"05:00 (EST)"`.
+ * Everything downstream expects a bare `HH:MM`, so normalise it here.
+ */
+export function sanitizeTime(time: string | undefined | null): string {
+  if (!time) return '';
+  const match = time.match(/(\d{1,2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : '';
+}
+
+/** Converts `"HH:MM"` (optionally with a timezone suffix) to minutes after midnight. */
+export function timeToMinutes(time: string | undefined | null): number | null {
+  const clean = sanitizeTime(time);
+  if (!clean) return null;
+  const [hours, minutes] = clean.split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
 }
 
 export interface PrayerTimesData {
@@ -57,7 +79,7 @@ export async function fetchPrayerTimesByCoords(
   
   if (!response.ok) throw new Error('Failed to fetch prayer times');
   const data = await response.json();
-  return data.data;
+  return normalizePrayerTimesData(data.data);
 }
 
 export async function fetchPrayerTimesByCity(
@@ -75,7 +97,7 @@ export async function fetchPrayerTimesByCity(
   
   if (!response.ok) throw new Error('Failed to fetch prayer times');
   const data = await response.json();
-  return data.data;
+  return normalizePrayerTimesData(data.data);
 }
 
 export async function fetchMonthlyPrayerTimes(
@@ -92,6 +114,15 @@ export async function fetchMonthlyPrayerTimes(
   if (!response.ok) throw new Error('Failed to fetch monthly prayer times');
   const data = await response.json();
   return data.data || [];
+}
+
+/** Strips AlAdhan's timezone suffixes so timings are always `HH:MM`. */
+function normalizePrayerTimesData(data: PrayerTimesData): PrayerTimesData {
+  if (!data?.timings) return data;
+  const timings = Object.fromEntries(
+    Object.entries(data.timings).map(([key, value]) => [key, sanitizeTime(String(value))])
+  ) as PrayerTimes;
+  return { ...data, timings };
 }
 
 export async function fetchHijriDate(date?: Date): Promise<any> {
@@ -111,31 +142,31 @@ export function getNextPrayer(timings: PrayerTimes): { name: string; time: strin
   const currentTotalMinutes = currentHours * 60 + currentMinutes;
 
   for (const prayer of prayers) {
-    const timeStr = timings[prayer as keyof PrayerTimes];
-    if (!timeStr) continue;
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const prayerTotalMinutes = hours * 60 + minutes;
-    
+    const raw = timings[prayer];
+    const prayerTotalMinutes = timeToMinutes(raw);
+    if (prayerTotalMinutes === null) continue;
+
     if (prayerTotalMinutes > currentTotalMinutes) {
       return {
         name: prayer,
-        time: timeStr,
+        time: sanitizeTime(raw),
         minutesLeft: prayerTotalMinutes - currentTotalMinutes,
       };
     }
   }
-  
+
   // Next prayer is Fajr tomorrow
-  const fajrTime = timings.Fajr;
-  const [hours, minutes] = fajrTime.split(':').map(Number);
-  const fajrMinutes = hours * 60 + minutes;
+  const fajrMinutes = timeToMinutes(timings.Fajr);
+  if (fajrMinutes === null) return null;
   const minutesLeft = (24 * 60 - currentTotalMinutes) + fajrMinutes;
-  
-  return { name: 'Fajr', time: fajrTime, minutesLeft };
+
+  return { name: 'Fajr', time: sanitizeTime(timings.Fajr), minutesLeft };
 }
 
-export function formatPrayerTime(time: string): string {
-  const [hours, minutes] = time.split(':').map(Number);
+export function formatPrayerTime(time: string | undefined | null): string {
+  const clean = sanitizeTime(time);
+  if (!clean) return '—';
+  const [hours, minutes] = clean.split(':').map(Number);
   const period = hours >= 12 ? 'PM' : 'AM';
   const displayHours = hours > 12 ? hours - 12 : hours === 0 ? 12 : hours;
   return `${displayHours}:${String(minutes).padStart(2, '0')} ${period}`;

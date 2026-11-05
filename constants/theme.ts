@@ -69,7 +69,7 @@ export const DarkColors = {
   // Navigation
   tabBarBg: '#0D1A14',
   tabBarBorder: '#1C3228',
-  statusBar: 'light' as const,
+  statusBar: 'light' as 'light' | 'dark',
 
   // Compass
   compassBg: '#0D1A14',
@@ -146,7 +146,7 @@ export const LightColors = {
   // Navigation
   tabBarBg: '#FFFFFF',
   tabBarBorder: '#E0D8C8',
-  statusBar: 'dark' as const,
+  statusBar: 'dark' as 'light' | 'dark',
 
   // Compass
   compassBg: '#F0EBE0',
@@ -159,6 +159,46 @@ export const LightColors = {
 export const Colors = DarkColors;
 
 export type ThemeColors = typeof DarkColors;
+
+// High-contrast palette: identical hues, but text and surfaces are pushed to
+// the extremes of the scale so low-vision users get maximum separation.
+export const HighContrastDarkColors: ThemeColors = {
+  ...DarkColors,
+  background: '#000000',
+  surface: '#0A0F0C',
+  surfaceElevated: '#121A15',
+  card: '#0D140F',
+  cardBorder: '#4E7A63',
+  divider: '#3A5C4A',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#E8F3EC',
+  textMuted: '#C3D8CC',
+  textArabic: '#FFFFFF',
+  gold: '#F7D27C',
+  goldLight: '#FFE7AE',
+  textInverse: '#000000',
+};
+
+export const HighContrastLightColors: ThemeColors = {
+  ...LightColors,
+  background: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceElevated: '#F2F2F2',
+  card: '#FFFFFF',
+  cardBorder: '#1F3D30',
+  divider: '#3A5C4A',
+  textPrimary: '#000000',
+  textSecondary: '#152A20',
+  textMuted: '#274A38',
+  textArabic: '#000000',
+  gold: '#6B4E10',
+  goldLight: '#4E3908',
+  textInverse: '#FFFFFF',
+};
+
+export function getHighContrastColors(theme: 'dark' | 'light'): ThemeColors {
+  return theme === 'light' ? HighContrastLightColors : HighContrastDarkColors;
+}
 
 export function getColors(theme: 'dark' | 'light' | 'system'): ThemeColors {
   if (theme === 'system') {

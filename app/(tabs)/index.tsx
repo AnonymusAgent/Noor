@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { Spacing, Radius } from '../../constants/theme';
 import { useApp } from '../../contexts/AppContext';
 import { fetchPrayerTimesByCoords, formatPrayerTime } from '../../services/prayerService';
+import { toDateKey } from '../../lib/date';
 import { OFFLINE_HADITHS } from '../../constants/offlineHadithDb';
 import { SURAH_LIST } from '../../constants/quranData';
 
@@ -68,10 +69,10 @@ const QUICK_ACTIONS = [
 
 function getGreeting(): string {
   const h = new Date().getHours();
-  if (h < 5) return 'Tahajjud Time 🌌';
+  if (h < 4) return 'Tahajjud Time 🌌';
   if (h < 12) return 'Good Morning ☀️';
   if (h < 17) return 'Good Afternoon 🌤️';
-  if (h < 20) return 'Good Evening 🌅';
+  if (h < 21) return 'Good Evening 🌅';
   return 'Good Night 🌙';
 }
 
@@ -86,16 +87,22 @@ function fmtCountdown(ms: number): string {
 
 function computeCountdown(timings: Record<string, string>): { name: PrayerName; ms: number; timeStr: string } {
   const now = new Date();
-  let best = { name: 'Fajr' as PrayerName, ms: Infinity, timeStr: '' };
+  let best: { name: PrayerName; ms: number; timeStr: string } = {
+    name: 'Fajr', ms: Infinity, timeStr: '',
+  };
 
   for (const prayer of PRAYER_ORDER) {
     const raw = timings[prayer];
     if (!raw) continue;
     const [hh, mm] = raw.split(':').map(Number);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
+
     const t = new Date(now);
     t.setHours(hh, mm, 0, 0);
-    let diff = t.getTime() - now.getTime();
-    if (diff < 0) diff += 86_400_000; // wrap to tomorrow
+    // If the time already passed today, the next occurrence is tomorrow.
+    if (t.getTime() <= now.getTime()) t.setDate(t.getDate() + 1);
+
+    const diff = t.getTime() - now.getTime();
     if (diff < best.ms) best = { name: prayer, ms: diff, timeStr: raw };
   }
   return best;
@@ -127,7 +134,7 @@ export default function HomeScreen() {
   const dailyHadith = OFFLINE_HADITHS[dayOfYear % OFFLINE_HADITHS.length];
 
   // ── Today's Salah record ────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateKey();
   const todayRecord = salahRecords.find(r => r.date === today);
   const todayPrayerCount = todayRecord
     ? PRAYER_ORDER.filter(p => prayerCompleted(todayRecord, p.toLowerCase())).length
@@ -135,18 +142,22 @@ export default function HomeScreen() {
 
   // ── Prayer streak (consecutive days with ≥1 prayer) ────────────────────────
   const prayerStreak = useMemo(() => {
-    let streak = 0;
-    const d = new Date();
-    while (streak < 365) {
-      const ds = d.toISOString().split('T')[0];
-      const rec = salahRecords.find(r => r.date === ds);
-      const count = rec
+    const loggedCount = (dateKey: string) => {
+      const rec = salahRecords.find(r => r.date === dateKey);
+      return rec
         ? PRAYER_ORDER.filter(p => rec[p.toLowerCase() as keyof typeof rec]).length
         : 0;
-      if (count > 0) {
-        streak++;
-        d.setDate(d.getDate() - 1);
-      } else break;
+    };
+
+    const d = new Date();
+    let streak = 0;
+    // Today usually has not been logged yet, so start from yesterday in that case.
+    if (loggedCount(toDateKey(d)) === 0) d.setDate(d.getDate() - 1);
+
+    while (streak < 366) {
+      if (loggedCount(toDateKey(d)) === 0) break;
+      streak++;
+      d.setDate(d.getDate() - 1);
     }
     return streak;
   }, [salahRecords]);
@@ -156,43 +167,57 @@ export default function HomeScreen() {
     const prog = settings.readingProgress || {};
     let totalRead = 0;
     let surahsStarted = 0;
-    const totalVerses = 6236;
 
+    // `readingProgress` stores the last ayah reached per surah, so the verses
+    // actually read in a finished surah is its full verse count, not the index
+    // of the last ayah (which would undercount by one per surah).
     for (let i = 1; i <= 114; i++) {
       const lastAyah = prog[i] || 0;
       if (lastAyah > 0) {
         surahsStarted++;
-        totalRead += lastAyah;
+        totalRead += Math.min(
+          lastAyah,
+          SURAH_LIST[i - 1]?.versesCount ?? lastAyah,
+        );
       }
     }
+    const totalVerses = 6236;
     const pct = Math.min(100, Math.round((totalRead / totalVerses) * 100));
     return { surahsStarted, totalRead, pct };
   }, [settings.readingProgress]);
 
   // ── Load prayer times ───────────────────────────────────────────────────────
   useEffect(() => {
-    loadPrayer();
     loadHijriDate();
   }, []);
 
-  const loadPrayer = async () => {
-    setLoadingPrayer(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      const coords = status === 'granted'
-        ? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })).coords
-        : { latitude: 21.4225, longitude: 39.8262 };
-      const data = await fetchPrayerTimesByCoords(
-        coords.latitude, coords.longitude, settings.prayerCalculationMethod
-      );
-      setPrayerTimings(data.timings);
-    } catch {
-      // Fallback placeholder timings (Makkah approximate)
-      setPrayerTimings({ Fajr: '05:00', Dhuhr: '12:30', Asr: '15:45', Maghrib: '18:15', Isha: '19:45' });
-    } finally {
-      setLoadingPrayer(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPrayer = async () => {
+      setLoadingPrayer(true);
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        const coords = status === 'granted'
+          ? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })).coords
+          : { latitude: 21.4225, longitude: 39.8262 };
+        const data = await fetchPrayerTimesByCoords(
+          coords.latitude, coords.longitude, settings.prayerCalculationMethod, settings.madhab
+        );
+        if (!cancelled) setPrayerTimings(data.timings);
+      } catch {
+        // Fallback placeholder timings (Makkah approximate)
+        if (!cancelled) {
+          setPrayerTimings({ Fajr: '05:00', Dhuhr: '12:30', Asr: '15:45', Maghrib: '18:15', Isha: '19:45' });
+        }
+      } finally {
+        if (!cancelled) setLoadingPrayer(false);
+      }
+    };
+
+    loadPrayer();
+    return () => { cancelled = true; };
+  }, [settings.prayerCalculationMethod, settings.madhab]);
 
   const loadHijriDate = async () => {
     try {
@@ -296,7 +321,11 @@ export default function HomeScreen() {
                   </Text>
                 </View>
               </View>
-              {nextPrayer?.timeStr ? (
+              {loadingPrayer && !prayerTimings ? (
+                <Text style={[styles.prayerActualTime, { color: C.textSecondary }]}>
+                  Fetching times…
+                </Text>
+              ) : nextPrayer?.timeStr ? (
                 <Text style={[styles.prayerActualTime, { color: C.textSecondary }]}>
                   {formatPrayerTime(nextPrayer.timeStr)}
                 </Text>

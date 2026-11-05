@@ -6,8 +6,6 @@ import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Dimensions,
 } from 'react-native';
-
-const { width: Dimensions_width } = Dimensions.get('window');
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { SURAH_LIST } from '../constants/quranData';
+
+const { width: Dimensions_width } = Dimensions.get('window');
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -24,7 +24,12 @@ export default function ProfileScreen() {
   const readingProgress = settings.readingProgress;
   const progressEntries = Object.entries(readingProgress);
   const surahsStarted = progressEntries.length;
-  const totalAyahsRead = progressEntries.reduce((s, [, v]) => s + v, 0);
+  // `readingProgress` holds the last ayah reached per surah, so cap each entry
+  // at the surah's verse count instead of summing raw indices.
+  const totalAyahsRead = progressEntries.reduce((sum, [key, lastAyah]) => {
+    const surah = SURAH_LIST[parseInt(key, 10) - 1];
+    return sum + (surah ? Math.min(lastAyah, surah.versesCount) : lastAyah);
+  }, 0);
   const completionPct = Math.min(100, Math.round((totalAyahsRead / 6236) * 100));
 
   const DATA_ITEMS = [

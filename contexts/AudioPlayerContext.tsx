@@ -11,10 +11,17 @@ import React, {
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { SURAH_LIST, RECITERS } from '../constants/quranData';
 import { getAudioUrl } from '../services/quranService';
+import { useApp } from './AppContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type RepeatMode = 'none' | 'one' | 'all';
+import type { AppSettings } from './AppContext';
+
+/**
+ * Repeat modes are shared with the reading settings so the value chosen in
+ * Settings > Playback actually reaches the player.
+ */
+export type RepeatMode = AppSettings['repeatMode'];
 export type PlaybackSpeed = 0.75 | 1 | 1.25 | 1.5;
 
 export interface NowPlaying {
@@ -49,48 +56,38 @@ interface AudioPlayerContextType {
 const AudioPlayerContext = createContext<AudioPlayerContextType | undefined>(undefined);
 
 export function AudioPlayerProvider({ children }: { children: ReactNode }) {
+  const { settings, updateSettings } = useApp();
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [playbackSpeed, setPlaybackSpeedState] = useState<PlaybackSpeed>(1);
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const currentSurahRef = useRef<number>(1);
   const currentReciterRef = useRef<string>('ar.alafasy');
-  const repeatModeRef = useRef<RepeatMode>('none');
 
-  // Keep refs in sync
-  useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
-
-  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
-    setPositionMs(status.positionMillis);
-    setDurationMs(status.durationMillis || 0);
-    setIsPlaying(status.isPlaying);
-
-    if (status.didJustFinish) {
-      const mode = repeatModeRef.current;
-      if (mode === 'one') {
-        soundRef.current?.replayAsync().catch(() => {});
-      } else if (mode === 'all') {
-        const next = currentSurahRef.current < 114
-          ? currentSurahRef.current + 1
-          : 1;
-        playSurahInternal(next, currentReciterRef.current);
-      } else {
-        // mode === 'none': auto-advance to next surah
-        if (currentSurahRef.current < 114) {
-          playSurahInternal(currentSurahRef.current + 1, currentReciterRef.current);
-        } else {
-          setIsPlaying(false);
-          setNowPlaying(null);
-        }
-      }
-    }
+  // Repeat mode lives in settings so the choice survives a restart and is
+  // shared with the Settings screen. `autoPlayNext` decides what happens when
+  // an ayah/surah finishes without an explicit repeat.
+  const repeatMode = settings.repeatMode;
+  const autoPlayNext = settings.autoPlayNext;
+  const repeatModeRef = useRef<RepeatMode>(repeatMode);
+  const autoPlayNextRef = useRef<boolean>(autoPlayNext);
+  const playbackSpeedRef = useRef<PlaybackSpeed>(playbackSpeed);
+  const playSurahRef = useRef<((surahNumber: number, reciterId: string) => Promise<void>) | null>(null);
+  // The expo-av status handler and the player reference each other, so the
+  // binding is indirected through a ref.
+  const statusHandlerRef = useRef<(status: AVPlaybackStatus) => void>(() => {});
+  const handlePlaybackStatus = useCallback((status: AVPlaybackStatus) => {
+    statusHandlerRef.current(status);
   }, []);
+
+  // Keep refs in sync so the expo-av status callback always sees fresh values.
+  useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
+  useEffect(() => { autoPlayNextRef.current = autoPlayNext; }, [autoPlayNext]);
+  useEffect(() => { playbackSpeedRef.current = playbackSpeed; }, [playbackSpeed]);
 
   const playSurahInternal = useCallback(async (
     surahNumber: number,
@@ -120,8 +117,8 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
-        { shouldPlay: true, rate: playbackSpeed, volume: 1.0 },
-        onPlaybackStatusUpdate,
+        { shouldPlay: true, rate: playbackSpeedRef.current, volume: 1.0 },
+        handlePlaybackStatus,
       );
 
       soundRef.current = sound;
@@ -136,12 +133,46 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
         reciterName: reciter.name,
       });
       setIsPlaying(true);
-    } catch (e) {
+    } catch {
       setIsPlaying(false);
     } finally {
       setIsLoading(false);
     }
-  }, [onPlaybackStatusUpdate, playbackSpeed]);
+  }, [handlePlaybackStatus]);
+
+  playSurahRef.current = playSurahInternal;
+
+  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
+    if (!status.isLoaded) return;
+    setPositionMs(status.positionMillis);
+    setDurationMs(status.durationMillis || 0);
+    setIsPlaying(status.isPlaying);
+
+    if (status.didJustFinish) {
+      const mode = repeatModeRef.current;
+      if (mode === 'ayah' || mode === 'surah') {
+        // Both repeat modes repeat the current surah track.
+        soundRef.current?.replayAsync().catch(() => {});
+        return;
+      }
+
+      if (!autoPlayNextRef.current) {
+        setIsPlaying(false);
+        setPositionMs(0);
+        return;
+      }
+
+      // Auto-advance; stop at the end of the Quran rather than wrapping around.
+      const next = currentSurahRef.current + 1;
+      if (next <= 114) {
+        playSurahRef.current?.(next, currentReciterRef.current);
+      } else {
+        setIsPlaying(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => { statusHandlerRef.current = onPlaybackStatusUpdate; }, [onPlaybackStatusUpdate]);
 
   const playSurah = useCallback(async (surahNumber: number, reciterId?: string) => {
     const rid = reciterId || currentReciterRef.current || 'ar.alafasy';
@@ -203,6 +234,10 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
   const seekTo = useCallback(async (ms: number) => {
     await soundRef.current?.setPositionAsync(ms);
   }, []);
+
+  const setRepeatMode = useCallback((mode: RepeatMode) => {
+    updateSettings({ repeatMode: mode });
+  }, [updateSettings]);
 
   const setPlaybackSpeed = useCallback(async (speed: PlaybackSpeed) => {
     setPlaybackSpeedState(speed);

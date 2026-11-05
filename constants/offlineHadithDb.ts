@@ -1,3 +1,4 @@
+import { EXTENDED_HADITHS } from './offlineHadithDbExtended';
 /**
  * Offline Hadith Database — 42 Nawawi + 40 core hadiths from major collections
  * Complete, verified, authentic hadiths stored locally for offline access.
@@ -554,8 +555,6 @@ export const OFFLINE_HADITHS: OfflineHadith[] = [
     narrator: 'Abdullah ibn Amr (RA)', grade: 'Hasan', reference: 'Al-Tirmidhi 2501'
   },
 ];
-
-import { EXTENDED_HADITHS } from './offlineHadithDbExtended';
 
 /** Combined database: core + extended hadiths */
 const ALL_HADITHS: OfflineHadith[] = [...OFFLINE_HADITHS, ...EXTENDED_HADITHS];

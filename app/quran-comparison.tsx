@@ -47,7 +47,7 @@ export default function QuranComparisonScreen() {
   const [selectedVerse, setSelectedVerse] = useState<number | null>(null);
   const [showSurahPicker, setShowSurahPicker] = useState(false);
   const [showTransPicker, setShowTransPicker] = useState(false);
-  const [syncedScrollY, setSyncedScrollY] = useState(0);
+  const syncedScrollY = useRef(0);
 
   const scrollRefs = useRef<(ScrollView | null)[]>([]);
   const isScrolling = useRef<boolean[]>([false, false, false]);
@@ -56,6 +56,9 @@ export default function QuranComparisonScreen() {
 
   useEffect(() => {
     loadData();
+    // `loadData` is recreated each render by design (it closes over the current
+    // selection); keying the effect on its inputs is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surahNum, activeTranslations]);
 
   const loadData = async () => {
@@ -88,7 +91,7 @@ export default function QuranComparisonScreen() {
   };
 
   const handleScroll = useCallback((sourceIndex: number, y: number) => {
-    setSyncedScrollY(y);
+    syncedScrollY.current = y;
     scrollRefs.current.forEach((ref, i) => {
       if (i !== sourceIndex && ref && !isScrolling.current[i]) {
         isScrolling.current[i] = true;

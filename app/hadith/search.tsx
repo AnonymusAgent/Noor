@@ -173,10 +173,6 @@ function searchHadiths(
   return [...offlineResults, ...uniqueCached].slice(0, 100);
 }
 
-function highlightText(text: string, query: string, color: string): string {
-  return text; // Return plain — RN doesn't support inline HTML highlighting in Text
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function HadithSearchScreen() {
@@ -355,7 +351,9 @@ export default function HadithSearchScreen() {
         </View>
       </View>
     );
-  }, [C, expandedId, isBookmarked]);
+  }, [
+    C, expandedId, isBookmarked, addBookmark, removeBookmark, router, shareHadith,
+  ]);
 
   const hasActiveFilters = gradeFilter !== 'All' || collectionFilter !== 'All' || narratorFilter.trim().length > 0;
   const showEmpty = query.trim().length === 0 && !hasActiveFilters;

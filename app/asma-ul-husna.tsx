@@ -7,9 +7,19 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Spacing, Radius } from '../constants/theme';
+import { Spacing, Radius, ThemeColors } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
 import { ASMA_UL_HUSNA, ASMA_CATEGORIES, AsmaName } from '../constants/asmaData';
+
+const CATEGORY_COLOR_KEYS: Record<string, keyof ThemeColors> = {
+  essence: 'gold',
+  mercy: 'success',
+  power: 'error',
+  knowledge: 'info',
+  creation: 'hizb',
+  justice: 'warning',
+  guidance: 'gold',
+};
 
 export default function AsmaUlHusnaScreen() {
   const router = useRouter();
@@ -32,13 +42,11 @@ export default function AsmaUlHusnaScreen() {
     setFavorites(prev => prev.includes(num) ? prev.filter(n => n !== num) : [...prev, num]);
   };
 
-  const getCategoryColor = (cat: string) => {
-    const map: Record<string, string> = {
-      essence: C.gold, mercy: C.success, power: C.error,
-      knowledge: C.info, creation: '#9B59B6', justice: C.warning, guidance: C.gold,
-    };
-    return map[cat] || C.gold;
-  };
+
+  const getCategoryColor = useCallback((cat: string) => {
+    const key = CATEGORY_COLOR_KEYS[cat];
+    return (key ? C[key] : undefined) || C.gold;
+  }, [C]);
 
   const renderItem = useCallback(({ item }: { item: AsmaName }) => (
     <Pressable
@@ -61,7 +69,7 @@ export default function AsmaUlHusnaScreen() {
         />
       </Pressable>
     </Pressable>
-  ), [C, favorites]);
+  ), [C, favorites, getCategoryColor]);
 
   return (
     <View style={[styles.container, { backgroundColor: C.background, paddingTop: insets.top }]}>

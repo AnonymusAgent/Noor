@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, FlatList,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -9,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Spacing, Radius } from '../constants/theme';
 import { useApp } from '../contexts/AppContext';
+import { parseDateKey, toDateKey } from '../lib/date';
 
 // Islamic events per Hijri month
 const ISLAMIC_EVENTS: Record<number, { day: number; name: string; type: 'major' | 'minor' | 'fasting' | 'special' }[]> = {
@@ -131,21 +131,27 @@ export default function HijriCalendarScreen() {
   const insets = useSafeAreaInsets();
   const { colors: C, fastingDays, toggleFastingDay } = useApp();
 
-  const today = new Date();
-  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  // Stable key for "today" so the memoised calendar does not rebuild on every
+  // render (a fresh Date object changes identity each time).
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const today = useMemo(() => parseDateKey(todayKey), [todayKey]);
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [hijriToday, setHijriToday] = useState<HijriDate | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [activeTab, setActiveTab] = useState<'calendar' | 'events' | 'fasting'>('calendar');
 
-  const todayVerse = DAILY_VERSES[today.getDate() % DAILY_VERSES.length];
+  const todayVerse = DAILY_VERSES[parseDateKey(todayKey).getDate() % DAILY_VERSES.length];
 
   const buildCalendar = useCallback(async () => {
     setLoading(true);
     try {
       // Get hijri for today
-      const todayHijri = await getHijriDate(today);
+      const todayHijri = await getHijriDate(parseDateKey(todayKey));
       setHijriToday(todayHijri);
 
       // Build month grid
@@ -166,9 +172,9 @@ export default function HijriCalendarScreen() {
 
       while (curr <= lastDay || days.length % 7 !== 0) {
         const dayDate = new Date(curr);
-        const isToday = curr.toDateString() === today.toDateString();
+          const isToday = curr.toDateString() === parseDateKey(todayKey).toDateString();
         const isCurrentMonth = curr.getMonth() === month;
-        const dateStr = curr.toISOString().split('T')[0];
+        const dateStr = toDateKey(curr);
 
         // Approximate hijri for this day using offset from firstDay
         let hijri: HijriDate | null = null;
@@ -215,7 +221,7 @@ export default function HijriCalendarScreen() {
     } finally {
       setLoading(false);
     }
-  }, [currentMonth, fastingDays]);
+  }, [currentMonth, fastingDays, todayKey]);
 
   useEffect(() => {
     buildCalendar();
@@ -224,14 +230,9 @@ export default function HijriCalendarScreen() {
   const prevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
   const nextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
-  const allEvents = Object.entries(ISLAMIC_EVENTS).flatMap(([month, events]) =>
-    events.map(e => ({ ...e, hijriMonth: parseInt(month), monthName: HIJRI_MONTH_NAMES[parseInt(month) - 1] }))
-  );
-
   const currentMonthHijri = calendarDays.find(d => d.isCurrentMonth && d.hijri)?.hijri;
   const isSacredMonth = currentMonthHijri ? SACRED_MONTHS.includes(currentMonthHijri.month) : false;
 
-  const ramadanDays = calendarDays.filter(d => d.isCurrentMonth && d.hijri?.month === 9);
   const fastedCount = fastingDays.filter(d => d.fasted).length;
 
   const getEventColor = (type: string) => {
@@ -373,7 +374,7 @@ export default function HijriCalendarScreen() {
                   </View>
                   <Pressable
                     style={[styles.fastBtn, { borderColor: selectedDay.isFasted ? C.info : C.cardBorder, backgroundColor: selectedDay.isFasted ? `${C.info}20` : 'transparent' }]}
-                    onPress={() => toggleFastingDay(selectedDay.gregorian.toISOString().split('T')[0])}
+                    onPress={() => toggleFastingDay(toDateKey(selectedDay.gregorian))}
                   >
                     <MaterialIcons name={selectedDay.isFasted ? 'check-circle' : 'radio-button-unchecked'} size={20} color={selectedDay.isFasted ? C.info : C.textMuted} />
                     <Text style={[styles.fastBtnText, { color: selectedDay.isFasted ? C.info : C.textMuted }]}>
@@ -443,7 +444,7 @@ export default function HijriCalendarScreen() {
               <View style={[styles.fastStatDivider, { backgroundColor: C.cardBorder }]} />
               <View style={styles.fastStat}>
                 <Text style={[styles.fastStatNum, { color: C.success }]}>
-                  {fastingDays.filter(d => d.fasted && d.date >= new Date(new Date().setDate(1)).toISOString().split('T')[0]).length}
+                  {fastingDays.filter(d => d.fasted && d.date >= toDateKey(new Date(new Date().setDate(1)))).length}
                 </Text>
                 <Text style={[styles.fastStatLabel, { color: C.textMuted }]}>This Month</Text>
               </View>
